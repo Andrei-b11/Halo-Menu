@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const listen = channel => callback => { const listener = (_event, value) => callback(value); ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener); };
 contextBridge.exposeInMainWorld('aptic', {
   state: () => ipcRenderer.invoke('state'), defaults: () => ipcRenderer.invoke('defaults'),
+  clipboard: request => ipcRenderer.invoke('clipboard', request),
   save: value => ipcRenderer.invoke('save', value), icon: spec => ipcRenderer.invoke('icon', spec),
   run: id => ipcRenderer.invoke('run', id), showMenu: () => ipcRenderer.invoke('show-menu'),
   hideMenu: () => ipcRenderer.invoke('hide-menu'), openEditor: () => ipcRenderer.invoke('open-editor'),

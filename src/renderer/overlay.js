@@ -10,7 +10,7 @@ function view(state) {
 }
 function open(state, { instant = false } = {}) {
   last = state; config = state.config; theme(config, state.dark); busy = false;
-  ring = mountRadial(host, view(state), { mode: 'live', anchor: state.anchor, hold: state.hold, pinned: state.pinned, instant: instant || state.instant, hint: state.notice || (state.pinned ? 'Anillo en vivo' : 'Esc para cerrar'), onChoose: run, onClose: () => window.aptic.hideMenu() });
+  ring = mountRadial(host, view(state), { mode: 'live', clips: state.clips, anchor: state.anchor, hold: state.hold, pinned: state.pinned, instant: instant || state.instant, hint: state.notice || (state.pinned ? 'Anillo en vivo' : 'Esc para cerrar'), onChoose: run, onClose: () => window.aptic.hideMenu() });
 }
 async function run(item) {
   if (busy) return; busy = true;
@@ -23,10 +23,10 @@ window.aptic.onOpen(state => open(state));
 window.aptic.onState(state => {
   config = state.config; theme(config, state.dark);
   // Solo el anillo en vivo se redibuja: rehacer uno normal mientras se usa le robaría el clic.
-  if (last?.pinned && state.pinned && ring && !busy) open({ ...last, config: state.config, dark: state.dark, hold: false }, { instant: true });
+  if (last?.pinned && state.pinned && ring && !busy) open({ ...last, clips: state.clips, config: state.config, dark: state.dark, hold: false }, { instant: true });
 });
 window.aptic.onPointer(point => ring?.track(point.x, point.y));
-window.aptic.onRelease(() => ring?.release());
+window.aptic.onRelease(() => { if (!busy) ring?.release(); });
 document.addEventListener('pointermove', e => {
   ring?.track(e.clientX, e.clientY);
   // Fijado, la ventana deja pasar los clics salvo cuando el cursor está sobre el anillo.
@@ -36,5 +36,30 @@ document.addEventListener('pointermove', e => {
   }
 });
 document.addEventListener('click', e => { if (!e.target.closest('button')) ring?.backgroundClick(e.clientX, e.clientY); });
-document.addEventListener('contextmenu', e => { e.preventDefault(); ring?.close(); });
-document.addEventListener('keydown', e => { ring?.key(e); });
+function pointedClip(e) {
+  const button = e.target.closest?.('[data-id]');
+  const item = button ? find(config?.items || [], button.dataset.id) : ring?.aimedItem;
+  return item?.type === 'clipboard' ? item : null;
+}
+async function captureClip(item, extra = {}) {
+  if (busy) return; busy = true;
+  try {
+    await window.aptic.clipboard({ op: 'capture', slot: item.target, mode: item.fileMode || 'copy', ...extra });
+    const label = host.querySelector('.ring-label'); if (label) label.textContent = 'Guardado en el espacio ' + item.target;
+  } catch (error) {
+    const label = host.querySelector('.ring-label'); if (label) label.textContent = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
+  } finally { busy = false; }
+}
+document.addEventListener('contextmenu', e => { e.preventDefault(); const item = pointedClip(e); if (item) captureClip(item); else ring?.close(); });
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+    const item = pointedClip(e); if (item) { e.preventDefault(); captureClip(item); return; }
+  }
+  if (!busy) ring?.key(e);
+});
+document.addEventListener('dragover', e => { if (pointedClip(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+document.addEventListener('drop', e => {
+  e.preventDefault(); const item = pointedClip(e); if (!item) return;
+  const paths = [...e.dataTransfer.files].map(file => window.aptic.pathFor(file)).filter(Boolean);
+  captureClip(item, paths.length ? { op: 'files', paths } : { op: 'text', text: e.dataTransfer.getData('text/plain') });
+});

@@ -4,6 +4,13 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { defaults, validate, validateLenient, findItem, walk, Store, boundsFor, switchProfile } = require('./config.cjs');
 const { windowSide } = require('../shared/geometry.js');
+const { ClipboardStore, slotId } = require('./clipboard-store.cjs');
+const fileClipboard = require('./file-clipboard.cjs');
+const { createPasteFocus } = require('./paste-focus.cjs');
+let pasteFocus, menuDestination = null;
+let clipboardResult = null;
+let openingMenu = 0, releasedWhileOpening = false;
+let clips, clipQueue = Promise.resolve();
 const testMode = process.argv.includes('--test-mode');
 const profile = process.argv.find(arg => arg.startsWith('--aptic-profile='));
 if (profile) app.setPath('userData', profile.slice('--aptic-profile='.length));
@@ -27,7 +34,7 @@ const trusted = new Set(['index.html', 'overlay.html'].map(file => pathToFileURL
 const native = (() => { try { require.resolve('uiohook-napi'); return true; } catch { return false; } })();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function snapshot() { return { config, platform: process.platform, dark: nativeTheme.shouldUseDarkColors, shortcutStatus, warning, issues, version: app.getVersion(), configPath: store.file, native, pinned: !!pinned, profileSwitches }; }
+function snapshot() { return { config, clips: clips?.summary() || {}, clipboardResult, platform: process.platform, dark: nativeTheme.shouldUseDarkColors, shortcutStatus, warning, issues, version: app.getVersion(), configPath: store.file, native, pinned: !!pinned, profileSwitches }; }
 function broadcast() { for (const win of [editor, overlay]) if (win && !win.isDestroyed()) win.webContents.send('state', snapshot()); }
 function secureWindow(options) {
   const win = new BrowserWindow({ ...options, webPreferences: { preload: path.join(__dirname, '../preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: options.transparent ? false : true } });
@@ -45,6 +52,7 @@ function notifyGesture(source, detail = '') { if (editor && !editor.isDestroyed(
 // el anillo no se mueve con ella: se le dice dónde está el punto dentro de la ventana.
 function stopHolding() { if (holding) clearInterval(holding.timer); holding = null; }
 function closeOverlay() {
+  openingMenu++; releasedWhileOpening = false;
   stopHolding();
   const was = !!pinned; pinned = null;
   if (overlay && !overlay.isDestroyed()) { overlay.setIgnoreMouseEvents(false); overlay.hide(); }
@@ -56,10 +64,13 @@ function placeOverlay(point, extra) {
   overlay.setBounds(bounds);
   overlay.webContents.send('open', { ...snapshot(), anchor: { x: point.x - bounds.x, y: point.y - bounds.y }, ...extra });
 }
-function showOverlay({ hold = false, rootId = null, source = 'menu', notice = '' } = {}) {
+async function showOverlay({ hold = false, rootId = null, source = 'menu', notice = '' } = {}) {
   if (!overlay || overlay.isDestroyed()) return;
   if (overlay.isVisible() && !pinned) { closeOverlay(); return; }
   if (pinned) closeOverlay();
+  const ticket = ++openingMenu; releasedWhileOpening = false;
+  menuDestination = await pasteFocus?.capture() || null;
+  if (ticket !== openingMenu || overlay.isDestroyed()) return;
   const cursor = screen.getCursorScreenPoint(), area = screen.getDisplayNearestPoint(cursor).workArea;
   const point = config.position === 'center' ? { x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) } : cursor;
   placeOverlay(point, { hold, rootId, pinned: false, notice });
@@ -74,6 +85,7 @@ function showOverlay({ hold = false, rootId = null, source = 'menu', notice = ''
       overlay.webContents.send('pointer', { x: c.x - b.x, y: c.y - b.y });
     }, 16);
     holding = { timer };
+    if (releasedWhileOpening) releaseHold();
   }
 }
 // Anillo en vivo: se queda abierto junto al editor, sin robarle el foco, y se redibuja con
@@ -88,13 +100,14 @@ function pin(on) {
   if (!on) { closeOverlay(); return snapshot(); }
   if (overlay.isVisible()) closeOverlay();
   pinned = { point: pinPoint() };
+  menuDestination = pasteFocus?.current || null;
   placeOverlay(pinned.point, { pinned: true });
   overlay.setIgnoreMouseEvents(true, { forward: true });
   overlay.showInactive();
   broadcast(); return snapshot();
 }
 function releaseHold() {
-  if (!holding) return;
+  if (!holding) { releasedWhileOpening = true; return; }
   stopHolding();
   if (overlay && !overlay.isDestroyed() && overlay.isVisible()) overlay.webContents.send('release');
 }
@@ -275,7 +288,11 @@ function keySender() {
   sender.catch(() => { sender = null; });
   return sender;
 }
-async function sendKeys(accelerator) {
+async function sendKeys(accelerator, destination) {
+  if (pasteFocus && accelerator === 'CommandOrControl+V') {
+    if (!await pasteFocus.restore(destination || pasteFocus.current, true)) throw Error('Windows no permitió pegar en la ventana de destino. El contenido está copiado: abre la carpeta de destino y pulsa Ctrl + V.');
+    return;
+  }
   const send = await keySender();
   // El foco vuelve a la aplicación de antes al esconder el anillo; se le da un instante.
   await delay(testMode ? 0 : 170);
@@ -286,15 +303,94 @@ async function runAction(id) {
   if (!item) throw new Error('Esta acción ya no existe.');
   if (item.type === 'group') throw new Error('Un grupo se abre en el anillo.');
   if (launching) return;
-  launching = true; closeOverlay();
+  launching = true;
+  const destination = overlay?.isVisible() ? menuDestination : await pasteFocus?.capture();
+  closeOverlay();
   try {
     if (item.type === 'settings') { showEditor(); return; }
     if (item.type === 'url') await shell.openExternal(item.target);
-    else if (item.type === 'keys') await sendKeys(item.target);
-    else if (item.type === 'text') { clipboard.writeText(item.target); await sendKeys('CommandOrControl+V'); }
+    else if (item.type === 'keys') await sendKeys(item.target, destination);
+    else if (item.type === 'text') { await clipboard.writeText(item.target); await sendKeys('CommandOrControl+V', destination); }
+    else if (item.type === 'clipboard') {
+      const result = await useClip(item.target, item.clipAction, destination);
+      const message = result?.destination ? 'Pegado en ' + result.destination : item.clipAction === 'copy' || item.clipAction === 'paths' ? 'Contenido copiado al portapapeles.' : 'Pegado enviado a la aplicación de destino.';
+      if (result !== null) {
+        clipboardResult = { message, at: Date.now() }; broadcast();
+        tray?.displayBalloon?.({ title: 'HALO · Portapapeles', content: message });
+      }
+    }
     else { const target = targetFor(item); await fs.promises.access(target); const error = await shell.openPath(target); if (error) throw new Error(error); }
-  } catch (error) { warning = 'No se pudo ejecutar «' + item.label + '»: ' + error.message; broadcast(); showEditor(); throw new Error(warning); }
+  } catch (error) {
+    warning = 'No se pudo ejecutar «' + item.label + '»: ' + error.message; broadcast(); showEditor();
+    if (item.type === 'clipboard' && !testMode) await dialog.showMessageBox(editor, { type: 'warning', title: 'HALO · No se ha pegado el contenido', message: error.message, buttons: ['Entendido'] });
+    throw new Error(warning);
+  }
   finally { launching = false; }
+}
+async function useClip(id, action = 'paste', destination) {
+  const value = clips.get(id);
+  if (!value) throw Error('El espacio ' + id + ' está vacío. Guarda texto o archivos desde el editor, o apunta al círculo y pulsa Ctrl + V.');
+  if (value.kind === 'text') await clipboard.writeText(value.text);
+  else {
+    const paths = await clips.availablePaths(value);
+    if (action === 'paths') await clipboard.writeText(paths.join('\r\n'));
+    else await fileClipboard.writeFiles(paths);
+    // Explorer exposes its destination folder, so transfer through the shell
+    // instead of depending on a simulated shortcut and the selected child view.
+    if (action === 'paste' && process.platform === 'win32') {
+      const pointer = destination?.pointer;
+      if (pointer) {
+        const result = await fileClipboard.pasteFiles(paths, pointer.desktop ? { folder: app.getPath('desktop') } : { handle: pointer.handle });
+        if (result) return result;
+      }
+      // Files need a real folder. Never send an unverified Ctrl+V to an unrelated window.
+      const picked = await dialog.showOpenDialog(editor, { title: 'No se detectó una carpeta bajo el ratón. Elige dónde pegar', properties: ['openDirectory', 'createDirectory'] });
+      if (picked.canceled) return null;
+      return fileClipboard.pasteFiles(paths, { folder: picked.filePaths[0] });
+    }
+  }
+  if (action === 'paste') await sendKeys('CommandOrControl+V', destination);
+}
+async function clipCommand(request) {
+  if (!request || typeof request !== 'object') throw Error('Operación no válida.');
+  const id = slotId(request.slot), mode = request.mode ?? 'copy';
+  if (!['copy', 'reference'].includes(mode)) throw Error('Modo de archivo no válido.');
+  switch (request.op) {
+    case 'get': return clips.get(id);
+    case 'text': clips.text(id, request.text); break;
+    case 'files': await clips.files(id, request.paths, mode); break;
+    case 'capture': {
+      const text = await clipboard.readText();
+      const paths = process.platform === 'win32' ? await fileClipboard.readFiles() : [];
+      if (paths.length) await clips.files(id, paths, mode);
+      else clips.text(id, text);
+      break;
+    }
+    case 'pick':
+    case 'pick-folder': {
+      const folder = request.op === 'pick-folder';
+      const result = await dialog.showOpenDialog(editor, { title: 'Guardar ' + (folder ? 'carpetas' : 'archivos') + ' en el espacio ' + id, properties: [folder ? 'openDirectory' : 'openFile', 'multiSelections'] });
+      if (result.canceled) return null;
+      await clips.files(id, result.filePaths, mode); break;
+    }
+    case 'clear': clips.put(id, null); break;
+    case 'paste-folder': {
+      const value = clips.get(id);
+      if (value?.kind !== 'files') throw Error('Guarda archivos o carpetas antes de elegir el destino.');
+      const paths = await clips.availablePaths(value);
+      const result = await dialog.showOpenDialog(editor, { title: 'Dónde quieres pegar el contenido', properties: ['openDirectory', 'createDirectory'] });
+      if (result.canceled) return null;
+      const pasted = await fileClipboard.pasteFiles(paths, { folder: result.filePaths[0] });
+      if (!pasted) throw Error('No se pudo abrir la carpeta de destino.');
+      clipboardResult = { message: 'Pegado en ' + pasted.destination, at: Date.now() };
+      break;
+    }
+    case 'copy': await useClip(id, 'copy'); break;
+    case 'paths': await useClip(id, 'paths'); break;
+    default: throw Error('Operación de portapapeles no válida.');
+  }
+  broadcast();
+  return { clips: clips.summary() };
 }
 async function pickImage() {
   const result = await dialog.showOpenDialog(editor, { title: 'Elegir imagen para el icono', filters: [{ name: 'Imágenes', extensions: ['png', 'jpg', 'jpeg', 'ico', 'bmp', 'gif'] }], properties: ['openFile'] });
@@ -338,6 +434,9 @@ else {
   app.on('second-instance', showEditor);
   app.whenReady().then(async () => {
     store = new Store(app.getPath('userData')); ({ config, warning } = store.read());
+    clips = new ClipboardStore(app.getPath('userData'));
+    if (clips.warning) warning = [warning, clips.warning].filter(Boolean).join(' ');
+    handle('clipboard', request => { const job = clipQueue.then(() => clipCommand(request)); clipQueue = job.catch(() => {}); return job; });
     handle('state', snapshot);
     handle('defaults', defaults);
     handle('save', value => { const result = saving.then(() => save(value)); saving = result.catch(() => {}); return result; });
@@ -365,6 +464,7 @@ else {
     });
     editor = secureWindow({ width: 1340, height: 880, minWidth: 1080, minHeight: 700, frame: false, show: false, backgroundColor: '#171717', title: 'HALO MENU', icon: path.join(renderer, 'assets/aptic.png') });
     overlay = secureWindow({ width: 520, height: 520, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, focusable: true, title: 'HALO MENU · Menú' });
+    pasteFocus = createPasteFocus([editor, overlay]);
     overlay.setAlwaysOnTop(true, 'pop-up-menu'); overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     overlay.on('blur', () => { if (config.closeOnBlur && !holding && !pinned) closeOverlay(); });
     editor.on('close', event => { if (!quitting && tray) { event.preventDefault(); if (pinned) closeOverlay(); editor.hide(); } });
@@ -387,5 +487,5 @@ else {
   }).catch(error => { dialog.showErrorBox('HALO MENU', error.message); app.quit(); });
 }
 app.on('before-quit', () => { quitting = true; });
-app.on('will-quit', () => { disposeBinding(binding); clearInterval(cornerTimer); globalShortcut.unregisterAll(); });
+app.on('will-quit', () => { pasteFocus?.close(); disposeBinding(binding); clearInterval(cornerTimer); globalShortcut.unregisterAll(); });
 app.on('window-all-closed', () => app.quit());

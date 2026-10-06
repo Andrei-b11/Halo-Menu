@@ -4,10 +4,11 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const geometry = globalThis.apticGeometry;
 
-const TYPES = [['system', 'Carpeta', 'folder'], ['path', 'App o archivo', 'app-window'], ['url', 'Web', 'globe'], ['keys', 'Atajo', 'keyboard'], ['text', 'Texto', 'type'], ['group', 'Grupo', 'layers'], ['settings', 'HALO', 'settings']];
+const TYPES = [['system', 'Carpeta', 'folder'], ['path', 'App o archivo', 'app-window'], ['url', 'Web', 'globe'], ['keys', 'Atajo', 'keyboard'], ['text', 'Texto', 'type'], ['clipboard', 'Portapapeles', 'clipboard'], ['group', 'Grupo', 'layers'], ['settings', 'HALO', 'settings']];
 const TYPE_NAME = { system: 'Carpeta del sistema', folder: 'Carpeta', path: 'Aplicación o archivo', url: 'Página web', keys: 'Atajo de teclado', text: 'Pegar texto', group: 'Grupo', settings: 'Abrir HALO' };
 const DEFAULT_TARGET = { folder: '', system: 'home', path: '', url: 'https://', keys: '', text: '', group: '', settings: '' };
 const DEFAULT_ICON = { folder: 'folder', system: 'folder', path: 'app-window', url: 'globe', keys: 'keyboard', text: 'type', group: 'layers', settings: 'settings' };
+TYPE_NAME.clipboard = 'Portapapeles persistente'; DEFAULT_TARGET.clipboard = '1'; DEFAULT_ICON.clipboard = 'clipboard';
 const SYSTEM_NAME = { home: 'Carpeta personal', downloads: 'Descargas', documents: 'Documentos', desktop: 'Escritorio', pictures: 'Imágenes', music: 'Música', videos: 'Vídeos' };
 const COLORS = ['#ed4c50', '#f0955a', '#e0a44f', '#e6c468', '#6cbb95', '#4cc0bd', '#5aa2f0', '#8e9cf5', '#a987ed', '#d786ba'];
 const ACCENTS = ['#ed4c50', '#f1768b', '#f0955a', '#e0a44f', '#6cbb95', '#a7c6ac', '#4cc0bd', '#5aa2f0', '#8e9cf5', '#a987ed', '#d786ba'];
@@ -78,6 +79,7 @@ function summary(item) {
   if (item.type === 'url') { try { return new URL(item.target).hostname || 'Sin dirección'; } catch { return 'Sin dirección'; } }
   if (item.type === 'keys') return item.target ? prettyKeys(item.target) : 'Sin combinación';
   if (item.type === 'text') return item.target ? '«' + item.target.slice(0, 40) + '»' : 'Sin texto';
+  if (item.type === 'clipboard') return 'Espacio ' + item.target + ' · ' + (state.clips?.[item.target]?.kind === 'text' ? 'Texto guardado' : state.clips?.[item.target] ? 'Archivos guardados' : 'Vacío');
   if (item.type === 'group') return item.items.length + (item.items.length === 1 ? ' acción' : ' acciones');
   return 'Abre este editor';
 }
@@ -310,6 +312,8 @@ function drawInspector() {
   $('#system-target').hidden = t !== 'system' && t !== 'folder'; $('#path-target').hidden = t !== 'path' && t !== 'folder';
   $('#pick-app').hidden = $('#pick-file').hidden = t === 'folder'; $('#action-url').hidden = t !== 'url';
   $('#action-keys').hidden = t !== 'keys'; $('#action-text').hidden = t !== 'text'; $('#group-tools').hidden = t !== 'group';
+  $('#clipboard-tools').hidden = t !== 'clipboard';
+  if (t === 'clipboard') drawClipboard();
   if (t === 'system') setValue($('#system-target'), item.target);
   if (t === 'folder') setValue($('#system-target'), '__folder');
   if (t === 'path' || t === 'folder') setValue($('#action-path'), item.target);
@@ -325,6 +329,7 @@ function drawInspector() {
     : needsNative ? 'El envío de teclas necesita el módulo nativo, que no está instalado.'
     : t === 'keys' ? 'Se envía a la aplicación que estaba delante al abrir el anillo.'
     : t === 'text' ? 'Se copia al portapapeles y se pega con ' + (isMac() ? '⌘' : 'Ctrl') + ' + V.'
+    : t === 'clipboard' ? 'Guardado permanente. En el anillo: clic para usar; clic derecho o Ctrl + V para sustituir el contenido.'
     : t === 'group' ? item.items.length + ' de ' + MAX_CHILDREN + ' acciones. Se abre en un arco alrededor de su sector' + (level === 0 ? '; dentro puede haber subgrupos.' : '.')
     : t === 'path' ? 'Elige una de tus aplicaciones instaladas o cualquier archivo, programa o carpeta.'
     : t === 'folder' ? 'Se abre en el explorador de archivos. Pulsa la carpeta de la derecha para elegir otra, o arrastra una desde el Explorador.'
@@ -371,7 +376,7 @@ function previewMount(host, { replay = false, onSelect, hint, extra = 0 } = {}) 
   if (!w || !h) return null;
   const reach = geometry.reach(config) + (config.labels === 'always' ? 26 : 0);
   const zoom = Math.max(.3, Math.min(1, (w - 30) / (2 * reach), (h - 70 - extra) / (2 * reach + 40)));
-  return mountRadial(host, config, { mode: 'preview', anchor: { x: w / 2, y: h / 2 - 16 }, zoom, instant: !replay, hint, onSelect, onClose: () => {} });
+  return mountRadial(host, config, { mode: 'preview', clips: state.clips, anchor: { x: w / 2, y: h / 2 - 16 }, zoom, instant: !replay, hint, onSelect, onClose: () => {} });
 }
 // --- Biblioteca -------------------------------------------------------------------------
 function drawLibrary() {
@@ -459,6 +464,83 @@ function drawStage(replay = false) {
 $('#stage').addEventListener('pointermove', e => stage?.track(e.clientX, e.clientY));
 $('#stage').addEventListener('pointerleave', () => stage?.clearAim());
 $('#replay').onclick = () => drawStage(true);
+
+// Slot contents are persisted independently from the action editor's undo history.
+let clipBusy = false, clipDraftKey = '';
+for (let n = 1; n <= 12; n++) $('#clip-slot').add(new Option('Espacio ' + n, String(n)));
+function drawClipboard() {
+  const item = current(); if (item?.type !== 'clipboard') return;
+  const key = item.id + ':' + item.target;
+  if (clipDraftKey !== key) { $('#clip-text').value = ''; clipDraftKey = key; }
+  $('#clip-slot').value = item.target; $('#clip-mode').value = item.fileMode || 'copy'; $('#clip-action').value = item.clipAction || 'paste';
+  const clip = state.clips?.[item.target];
+  $('#clip-status').textContent = clipBusy ? 'Procesando…' : !clip ? 'Todavía no has guardado contenido' : clip.kind === 'text' ? 'Texto guardado' : clip.mode === 'copy' ? 'Copia guardada en HALO' : 'Referencia al original';
+  $('#clip-preview').textContent = clip?.preview || '';
+  $('#clip-action-help').textContent = (item.clipAction || 'paste') === 'paste'
+    ? 'Archivos: coloca el ratón sobre una carpeta abierta del Explorador o sobre el escritorio y abre el anillo con tu atajo. Se usa ese destino; si no se reconoce, podrás elegirlo. Texto: se pega en la aplicación anterior.'
+    : item.clipAction === 'copy' ? 'El círculo solo copia. Después elige dónde pegar y pulsa Ctrl + V.' : 'Copia las ubicaciones como texto; no pega los archivos.';
+  for (const el of $$('#clipboard-tools button, #clipboard-tools select')) el.disabled = clipBusy;
+  $('#clip-copy').disabled = $('#clip-clear').disabled = clipBusy || !clip;
+  $('#clip-paste-folder').hidden = state.platform !== 'win32' || clip?.kind !== 'files';
+  $('#clip-paste-folder').disabled = clipBusy;
+  $('#clip-edit-text').disabled = clipBusy || clip?.kind !== 'text';
+}
+async function saveClipboard(op, extra = {}, item = current()) {
+  if (clipBusy || item?.type !== 'clipboard') return;
+  clipBusy = true; drawClipboard();
+  try {
+    const result = await window.aptic.clipboard({ slot: item.target, mode: item.fileMode || 'copy', op, ...extra });
+    if (result?.clips) { state.clips = result.clips; drawList(); drawLibrary(); toast(op === 'copy' ? 'Copiado. Ya puedes pegarlo donde quieras.' : op === 'paste-folder' ? 'Contenido pegado en la carpeta elegida.' : op === 'clear' ? 'Espacio vaciado.' : 'Guardado en el espacio ' + item.target + '.'); }
+  } catch (error) { toast(cleanError(error.message)); }
+  finally { clipBusy = false; drawClipboard(); }
+}
+$('#clip-slot').onchange = e => { const item = current(); item.target = e.target.value; if (/^Espacio \d+$/.test(item.label)) item.label = 'Espacio ' + item.target; commit(); };
+$('#clip-mode').onchange = e => { current().fileMode = e.target.value; commit(); };
+$('#clip-action').onchange = e => { current().clipAction = e.target.value; commit(); };
+$('#clip-capture').onclick = () => saveClipboard('capture');
+$('#clip-pick').onclick = () => saveClipboard('pick');
+$('#clip-pick-folder').onclick = () => saveClipboard('pick-folder');
+$('#clip-copy').onclick = () => saveClipboard('copy');
+$('#clip-paste-folder').onclick = () => saveClipboard('paste-folder');
+$('#clip-clear').onclick = () => saveClipboard('clear');
+$('#clip-save-text').onclick = () => saveClipboard('text', { text: $('#clip-text').value });
+$('#clip-edit-text').onclick = async () => {
+  const item = current(), key = item.id + ':' + item.target;
+  try { const clip = await window.aptic.clipboard({ op: 'get', slot: item.target }); if (key === clipDraftKey) $('#clip-text').value = clip?.text || ''; }
+  catch (error) { toast(cleanError(error.message)); }
+};
+function clipDrop(e, item) {
+  e.preventDefault(); e.stopPropagation();
+  const paths = [...e.dataTransfer.files].map(file => window.aptic.pathFor(file)).filter(Boolean);
+  if (paths.length) saveClipboard('files', { paths }, item);
+  else saveClipboard('text', { text: e.dataTransfer.getData('text/plain') }, item);
+}
+$('#clip-drop').ondragover = e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.classList.add('dragover'); };
+$('#clip-drop').ondragleave = e => e.currentTarget.classList.remove('dragover');
+$('#clip-drop').ondrop = e => { e.currentTarget.classList.remove('dragover'); clipDrop(e, current()); };
+$('#clip-drop').onkeydown = e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); saveClipboard('capture'); } };
+// Capture external drops before the existing action-reordering handlers see them.
+for (const host of [$('#stage'), $('#actions')]) {
+  const droppedItem = e => { const id = e.target.closest('[data-id]')?.dataset.id; const item = id && locate(id)?.item; return !dragId && item?.type === 'clipboard' ? item : null; };
+  host.addEventListener('dragover', e => { if (droppedItem(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+  host.addEventListener('drop', e => { const item = droppedItem(e); if (item) clipDrop(e, item); }, true);
+}
+$('#add-clipboard').onclick = () => {
+  if (config.items.length >= MAX_ITEMS) return toast('El anillo está lleno. Mueve una acción a la biblioteca para añadir el grupo.');
+  const group = newItem('group', 'Portapapeles'); group.icon = 'clipboard';
+  group.items = Array.from({ length: 5 }, (_, i) => ({ ...newItem('clipboard', 'Espacio ' + (i + 1)), target: String(i + 1) }));
+  config.items.push(group); selected = group.items[0].id; commit();
+  toast('Cinco círculos listos. Puedes añadir más acciones de tipo Portapapeles y elegir espacios del 1 al 12.');
+};
+$('#add-clipboard-single').onclick = () => {
+  const used = new Set(Object.keys(state.clips || {}));
+  const collect = items => { for (const item of items || []) { if (item.type === 'clipboard') used.add(item.target); collect(item.items); } };
+  collect(config.items); collect(config.library); config.profiles.forEach(profile => collect(profile.items));
+  const slot = Array.from({ length: 12 }, (_, i) => String(i + 1)).find(id => !used.has(id));
+  if (!slot) return toast('Los 12 espacios ya están en uso. Puedes elegir uno existente en una acción de tipo Portapapeles.');
+  const item = newItem('clipboard', 'Espacio ' + slot); item.target = slot;
+  if (insert(item, { list: config.items, index: config.items.length, parent: null, level: 0 })) toast('Espacio individual añadido al anillo. Guarda texto, archivos o carpetas.');
+};
 
 // Las vistas previas de Tema y Forma: un «escritorio» con texto debajo para ver el velo, y
 // un recorrido automático por las acciones para enseñar el indicador y las etiquetas.
@@ -857,7 +939,9 @@ document.addEventListener('keydown', e => {
 });
 
 window.aptic.onState(value => {
-  const dark = state?.dark; state = value; if (!config) return;
+  const dark = state?.dark, oldClips = JSON.stringify(state?.clips), previousResult = state?.clipboardResult?.at; state = value; if (!config) return;
+  if (value.clipboardResult && value.clipboardResult.at !== previousResult) toast(value.clipboardResult.message);
+  if (oldClips !== JSON.stringify(value.clips)) { drawClipboard(); drawList(); drawLibrary(); }
   if (value.profileSwitches !== seenSwitches) {
     seenSwitches = value.profileSwitches; clearTimeout(saveTimer);
     config = structuredClone(value.config); saved = JSON.stringify(config); lastSnap = snap();

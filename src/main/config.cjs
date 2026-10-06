@@ -21,7 +21,7 @@ const RANGES = {
   veil: [0, 100], shadow: [0, 100], rotation: [-180, 180], labelSize: [9, 16], hubSize: [28, 96], aimScale: [100, 135]
 };
 const SWITCHES = ['nativeIcons', 'closeOnBlur', 'pointer', 'itemBorder'];
-const TYPES = ['system', 'folder', 'path', 'url', 'settings', 'keys', 'text', 'group'];
+const TYPES = ['system', 'folder', 'path', 'url', 'settings', 'keys', 'text', 'group', 'clipboard'];
 const SYSTEM_FOLDERS = ['home', 'downloads', 'desktop', 'documents', 'pictures', 'music', 'videos'];
 // Límites pensados para que el anillo siga siendo cómodo: con más de 16 los sectores son tan
 // estrechos que apuntar deja de ser un gesto, y más de dos niveles de grupos se pierden.
@@ -106,6 +106,11 @@ function validateItem(item, ids, level, lenient) {
   if (item.type === 'url') { try { const url = new URL(item.target); if (!['https:', 'http:'].includes(url.protocol) || !url.hostname) throw Error(); } catch { fail(where + 'introduce una dirección http o https válida.'); } }
   if (item.type === 'keys' && !SEND_KEYS.test(item.target)) fail(where + 'graba una combinación de teclas.');
   if (item.type === 'text' && !item.target.trim()) fail(where + 'escribe el texto que se pegará.');
+  if (item.type === 'clipboard') {
+    if (!/^(?:[1-9]|1[0-2])$/.test(item.target)) fail(where + 'elige un espacio del 1 al 12.');
+    if (!['copy', 'reference'].includes(item.fileMode ?? 'copy')) fail(where + 'modo de archivo no válido.');
+    if (!['paste', 'copy', 'paths'].includes(item.clipAction ?? 'paste')) fail(where + 'modo de pegado no válido.');
+  }
   if (typeof item.icon !== 'string' || !/^[a-z0-9-]{1,48}$/.test(item.icon)) fail(where + 'icono no válido.');
   const color = item.color ?? '';
   if (color !== '' && !/^#[\da-f]{6}$/i.test(color)) fail(where + 'color no válido.');
@@ -116,6 +121,7 @@ function validateItem(item, ids, level, lenient) {
   const clean = { id: item.id, label: item.label.trim(), type: item.type, target: item.type === 'group' || item.type === 'settings' ? '' : item.target, icon: item.icon, color };
   if (image) clean.image = image;
   if (hotkey) clean.hotkey = hotkey;
+  if (item.type === 'clipboard') { clean.fileMode = item.fileMode ?? 'copy'; clean.clipAction = item.clipAction ?? 'paste'; }
   const mine = new Set([item.id]);
   if (item.type === 'group') {
     if (!Array.isArray(item.items) || item.items.length > MAX_CHILDREN) fail(where + 'un grupo lleva entre 1 y ' + MAX_CHILDREN + ' acciones.');

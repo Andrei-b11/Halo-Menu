@@ -140,8 +140,8 @@ const editorVisible = app => app.evaluate(({ BrowserWindow }) => BrowserWindow.g
     assert.equal(await overlay.locator('.ring-opt').count(), 10);
     await overlay.keyboard.press('ArrowRight'); assert.equal(await overlay.evaluate(() => document.activeElement.className.includes('ring-opt')), true);
     // El submenú se abre con Intro y se cierra con Retroceso, sin cerrar el anillo.
-    const group = await overlay.evaluate(() => [...document.querySelectorAll('.ring-opt')].findIndex(b => b.dataset.id === 'edit'));
-    await overlay.keyboard.press(String(group + 1)); await overlay.waitForSelector('.ring-arc .ring-sub', { state: 'attached' });
+    await overlay.locator('.ring-opt[data-id="edit"]').focus();
+    await overlay.keyboard.press('Enter'); await overlay.waitForSelector('.ring-arc .ring-sub', { state: 'attached' });
     assert.equal(await overlay.locator('.ring-sub').count(), 6);
     await overlay.screenshot({ path: path.join(output, '03-overlay.png') });
     await overlay.keyboard.press('Backspace'); assert.equal(await overlay.locator('.ring-sub').count(), 0); assert.equal(await overlayVisible(app), true);

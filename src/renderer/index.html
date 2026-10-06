@@ -37,7 +37,7 @@
           <div class="card list-card">
             <div class="card-head"><span>Anillo <b id="count">8</b></span><div><button class="tool" id="add" title="Añadir acción" aria-label="Añadir acción" data-icon="plus"></button><button class="tool" id="add-app" title="Añadir una aplicación instalada" aria-label="Añadir aplicación" data-icon="app-window"></button><button class="tool" id="add-group" title="Añadir grupo" aria-label="Añadir grupo" data-icon="folder-plus"></button></div></div>
             <div id="actions" role="listbox" aria-label="Acciones del anillo"></div>
-            <div class="card-foot">Hasta 16 en el anillo y 12 por grupo, con dos niveles de grupos. Suelta aquí lo que arrastres desde la biblioteca.</div>
+            <div class="card-foot"><button class="chip" id="add-clipboard-single"><span data-icon="clipboard"></span>Añadir espacio individual</button><button class="chip" id="add-clipboard"><span data-icon="clipboard"></span>Crear 5 espacios</button><p>Portapapeles persistente: texto, archivos y carpetas en círculos numerados. Hasta 16 acciones en el anillo y 12 por grupo.</p></div>
           </div>
           <div class="card stage-card">
             <div class="card-head"><span><i class="status-dot"></i>Vista previa</span><div><button class="tool" id="replay" title="Repetir animación" aria-label="Repetir animación" data-icon="rotate-ccw"></button></div></div>
@@ -53,6 +53,36 @@
               <input id="action-url" placeholder="https://…" spellcheck="false">
               <input id="action-keys" class="recorder" readonly placeholder="Haz clic y pulsa la combinación" aria-label="Grabar combinación que se enviará">
               <textarea id="action-text" rows="3" maxlength="4096" placeholder="Texto que se pegará donde esté el cursor"></textarea>
+              <div id="clipboard-tools" hidden>
+                <section class="clip-section">
+                  <h3><span>1</span> Contenido guardado</h3>
+                  <div id="clip-drop" tabindex="0" role="group" aria-label="Guardar contenido en el espacio">
+                    <strong id="clip-status">Espacio vacío</strong><p id="clip-preview"></p>
+                    <span>Arrastra aquí archivos o carpetas. También puedes guardar lo que hayas copiado.</span>
+                  </div>
+                  <div class="clip-buttons"><button class="chip" id="clip-pick">Elegir archivos…</button><button class="chip" id="clip-pick-folder">Elegir carpetas…</button><button class="chip" id="clip-capture">Guardar portapapeles</button></div>
+                  <details id="clip-text-panel"><summary>Escribir o editar texto</summary>
+                    <textarea id="clip-text" rows="3" maxlength="1048576" placeholder="Escribe o pega el texto que quieras conservar" aria-label="Texto del espacio"></textarea>
+                    <div class="clip-buttons"><button class="chip" id="clip-save-text">Guardar texto</button><button class="chip" id="clip-edit-text">Cargar texto guardado</button></div>
+                  </details>
+                </section>
+                <section class="clip-section">
+                  <h3><span>2</span> Al pulsar el círculo</h3>
+                  <select id="clip-action" aria-label="Al pulsar el círculo"><option value="paste">Pegar automáticamente</option><option value="copy">Solo copiar · yo pegaré con Ctrl + V</option><option value="paths">Copiar las rutas como texto</option></select>
+                  <p class="hint" id="clip-action-help"></p>
+                  <button class="chip" id="clip-copy">Copiar ahora para probar</button>
+                  <button class="chip" id="clip-paste-folder">Pegar en una carpeta…</button>
+                </section>
+                <details id="clip-advanced" class="clip-section"><summary>Opciones avanzadas</summary>
+                  <label class="field-label" for="clip-mode">Cómo guardar archivos y carpetas nuevos</label>
+                  <select id="clip-mode"><option value="copy">Conservar una copia en HALO</option><option value="reference">Usar el original · última versión</option></select>
+                  <p class="hint">La copia permanece aunque borres el original. La referencia necesita que el original siga en su sitio. Se aplica al próximo contenido que guardes.</p>
+                  <label class="field-label" for="clip-slot">Espacio compartido entre perfiles</label>
+                  <select id="clip-slot" aria-label="Espacio de portapapeles"></select>
+                  <p class="hint">Dos círculos con el mismo número usan el mismo contenido. Hasta 100 archivos o carpetas; 200 MB y 10.000 elementos por copia.</p>
+                  <button class="chip danger" id="clip-clear">Vaciar este espacio</button>
+                </details>
+              </div>
               <div class="group-tools" id="group-tools"><button class="chip" id="group-add"><span data-icon="plus"></span>Añadir acción dentro</button><button class="chip" id="group-add-sub"><span data-icon="folder-plus"></span>Añadir subgrupo</button></div>
               <div class="hint" id="target-hint"></div>
             </div>

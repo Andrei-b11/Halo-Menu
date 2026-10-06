@@ -105,6 +105,10 @@ export function mountRadial(host, config, options = {}) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = cls; b.style.setProperty('--i', i); b.dataset.level = level;
     b.setAttribute('role', 'menuitem'); b.setAttribute('aria-label', item.label); b.dataset.id = item.id;
+    if (item.type === 'clipboard') {
+      b.title = options.clips?.[item.target]?.preview || 'Espacio vacío · guarda contenido desde el editor';
+      const badge = document.createElement('small'); badge.className = 'clip-badge'; badge.textContent = item.target; b.append(badge);
+    }
     if (item.type === 'group') { b.dataset.more = ''; b.setAttribute('aria-haspopup', 'menu'); }
     if (item.color) { b.dataset.tint = ''; b.style.setProperty('--tint', item.color); }
     const g = document.createElement('span'); g.className = 'ring-glyph';
@@ -196,7 +200,9 @@ export function mountRadial(host, config, options = {}) {
       set('--aim', pointerAngle + 'deg'); set('--aim-step', (aim.level ? Math.max(lv.step, 18) : main.step) + 'deg');
       set('--aim-r', lv.radius + 'px');
       root.dataset.aiming = aim.level ? 'sub' : 'opt';
-      label.textContent = item.label; hubText.textContent = item.label; root.dataset.label = ''; placeLabel();
+      const saved = item.type === 'clipboard' ? options.clips?.[item.target] : null;
+      label.textContent = item.type === 'clipboard' ? item.label + ' · ' + (saved ? saved.preview.slice(0, 60) : 'Vacío') : item.label;
+      hubText.textContent = item.label; root.dataset.label = ''; placeLabel();
     } else { root.removeAttribute('data-aiming'); root.removeAttribute('data-label'); hubText.textContent = hint; }
     options.onAim?.(item);
   }
@@ -329,6 +335,7 @@ export function mountRadial(host, config, options = {}) {
   return {
     root, track, release, close, replay, key, backgroundClick, place, mark, reveal,
     get buttons() { return levels[0].buttons; },
+    get aimedItem() { return aim ? levels[aim.level]?.items[aim.i] : null; },
     clearAim: () => setAim(null, false),
     aimAt: i => { if (!closed && config.items[i]) setAim({ level: 0, i }, false); },
     openGroup: id => reveal(id),
