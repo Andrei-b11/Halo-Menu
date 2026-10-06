@@ -1,0 +1,188 @@
+/* El anillo. Todo el color sale de las variables del tema, así que se ve igual de suyo en
+   Carbón, Medianoche, Papel o Claro, y sigue al acento elegido. La colocación es polar y
+   declarativa —--a es el ángulo de cada círculo y el propio CSS hace la trigonometría—, de
+   modo que abrir y cerrar son transiciones y no un bucle de JavaScript.
+
+   Apertura en espiral (de LINDE): el radio y un giro extra son propiedades registradas, así
+   que el navegador las interpola como números: cada círculo sale del centro describiendo una
+   curva y rebasa un poco su sitio antes de asentarse. */
+@property --rr{syntax:'<length>';inherits:false;initial-value:0px}
+@property --sweep{syntax:'<angle>';inherits:false;initial-value:0deg}
+@property --aim{syntax:'<angle>';inherits:true;initial-value:-90deg}
+
+.ring-host{position:relative;width:100%;height:100%}
+.ring{position:absolute;left:var(--cx);top:var(--cy);width:0;height:0;outline:none;font-family:Outfit,'Segoe UI',sans-serif;
+  --solid:color-mix(in srgb,var(--surface) 90%,var(--text));
+  --item-bg:color-mix(in srgb,var(--solid) var(--opacity),transparent);
+  --item-line:color-mix(in srgb,var(--line) 70%,color-mix(in srgb,var(--text) 12%,transparent));
+  --e-out:cubic-bezier(.16,1,.3,1);--e-spring:cubic-bezier(.34,1.4,.64,1);--e-pop:cubic-bezier(.34,1.5,.64,1);--e-in:cubic-bezier(.55,0,.8,.3);
+  --sh:0 6px 18px rgb(0 0 0 / calc(var(--shadow) * .6));
+  transition:--aim .2s var(--e-out)}
+
+/* Un disco tenue detrás separa el anillo de lo que haya debajo; crece con él. */
+.ring-disc{position:absolute;left:0;top:0;width:calc(var(--ring-r) * 2 + var(--size) + 56px);aspect-ratio:1;translate:-50% -50%;border-radius:50%;pointer-events:none;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--bg) var(--veil),transparent) 62%,color-mix(in srgb,var(--bg) calc(var(--veil) * .45),transparent) 82%,transparent);
+  scale:1;opacity:1;transition:scale calc(var(--d) * 1.1) var(--e-out),opacity calc(var(--d) * .6) ease-out}
+.ring[data-arc] .ring-disc{scale:1.18}
+
+/* Estilo «Anillo»: una pista continua en la que se asientan los iconos, como el de Logitech. */
+.ring[data-style=ring]::before{content:'';position:absolute;left:0;top:0;width:calc(var(--ring-r) * 2 + var(--size) + 22px);aspect-ratio:1;translate:-50% -50%;box-sizing:border-box;border-radius:50%;
+  border:calc(var(--size) + 22px) solid color-mix(in srgb,var(--panel) var(--opacity),transparent);
+  box-shadow:0 10px 34px rgb(0 0 0 / calc(var(--shadow) * .6)),0 0 0 1px var(--item-line),inset 0 0 0 1px var(--item-line);
+  pointer-events:none;scale:1;rotate:0deg;opacity:1;transition:scale var(--d) var(--e-out),rotate calc(var(--d) * 1.2) var(--e-out),opacity calc(var(--d) * .5) ease-out}
+.ring[data-style=ring] .ring-opt{background:transparent;border-color:transparent;box-shadow:none}
+.ring[data-style=ring] .ring-opt[data-tint]{background:color-mix(in srgb,var(--tint) 18%,transparent)}
+
+/* --- Círculos ------------------------------------------------------------------------ */
+.ring :is(.ring-opt,.ring-sub){position:absolute;left:0;top:0;display:grid;place-items:center;padding:0;margin:0;border-radius:50%;cursor:pointer;
+  width:var(--size);height:var(--size);background:var(--item-bg);border:1px solid var(--item-line);color:var(--text);font:inherit;
+  --sweep:0deg;--rr:var(--ring-r);
+  transform:translate(-50%,-50%) translate(calc(cos(var(--a) + var(--sweep)) * var(--rr)),calc(sin(var(--a) + var(--sweep)) * var(--rr)));
+  box-shadow:var(--sh);scale:1;opacity:1;
+  translate:0 0;--delay:calc(var(--i) * var(--d) * .05);
+  transition-property:--rr,--sweep,scale,opacity,box-shadow,translate,background,color,border-color;
+  transition-duration:var(--d),calc(var(--d) * 1.12),calc(var(--d) * .88),calc(var(--d) * .5),var(--d),var(--d),.12s,.12s,.12s;
+  transition-timing-function:var(--e-spring),var(--e-out),var(--e-pop),ease-out,ease-out,var(--e-out),ease,ease,ease;
+  transition-delay:var(--delay),var(--delay),var(--delay),var(--delay),var(--delay),var(--delay),0s,0s,0s}
+.ring .ring-sub{width:var(--sub);height:var(--sub);--rr:var(--arc-r);background:color-mix(in srgb,var(--panel) var(--opacity),transparent)}
+.ring[data-shape=squircle] :is(.ring-opt,.ring-sub){border-radius:31%}
+.ring[data-shape=squircle][data-style=ring] .ring-opt{border-radius:31%}
+.ring-arc{position:absolute;left:0;top:0;width:0;height:0}
+.ring-glyph{display:grid;place-items:center;width:var(--icon);height:var(--icon);pointer-events:none}
+.ring-sub .ring-glyph{width:var(--sub-icon);height:var(--sub-icon)}
+.ring-glyph :is(svg,img){width:100%;height:100%;object-fit:contain}
+.ring-glyph img{border-radius:18%}
+
+/* Color propio de una acción: tiñe el fondo y el icono. */
+.ring [data-tint]{--item-bg:color-mix(in srgb,var(--tint) 24%,color-mix(in srgb,var(--solid) var(--opacity),transparent));border-color:color-mix(in srgb,var(--tint) 50%,var(--line));color:var(--tint)}
+.ring .ring-sub[data-tint]{background:var(--item-bg)}
+
+/* Apuntar: el círculo crece y se rodea del acento. */
+.ring :is(.ring-opt,.ring-sub).aim{background:color-mix(in srgb,var(--accent) 16%,var(--solid));border-color:var(--accent);color:var(--accent);scale:var(--aim-scale,1.12);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 20%,transparent),0 8px 22px rgb(0 0 0 / calc(var(--shadow) * .65))}
+.ring :is(.ring-opt,.ring-sub)[data-tint].aim{background:color-mix(in srgb,var(--tint) 34%,var(--solid));border-color:var(--tint);color:var(--tint);box-shadow:0 0 0 4px color-mix(in srgb,var(--tint) 24%,transparent),0 8px 22px rgb(0 0 0 / calc(var(--shadow) * .65))}
+.ring button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+/* Un punto en la esquina avisa de que ese círculo abre un submenú. */
+.ring-opt[data-more]::after{content:'';position:absolute;right:12%;bottom:12%;width:5px;height:5px;border-radius:50%;background:var(--muted);transition:background .12s,scale .12s}
+.ring-opt[data-more]:is(.open,.aim)::after{background:var(--accent);scale:1.25}
+.ring-opt.open{border-color:color-mix(in srgb,var(--accent) 50%,var(--line));color:var(--accent)}
+
+/* Etiquetas fijas bajo cada círculo. */
+.ring-tag{position:absolute;top:calc(100% + 6px);left:50%;translate:-50% 0;max-width:120px;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--panel) 90%,transparent);color:var(--text);font-size:calc(var(--label-size) - 1px);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;box-shadow:0 3px 10px rgb(0 0 0 / calc(var(--shadow) * .35))}
+.ring .aim .ring-tag{background:var(--text);color:var(--bg)}
+
+/* --- Centro ------------------------------------------------------------------------- */
+.ring-hub{position:absolute;left:0;top:0;width:var(--hub);height:var(--hub);translate:-50% -50%;display:grid;place-items:center;align-content:center;padding:0;margin:0;border-radius:50%;cursor:pointer;
+  background:var(--bg);border:1px solid var(--item-line);color:var(--muted);font:inherit;box-shadow:0 6px 20px rgb(0 0 0 / calc(var(--shadow) * .65));
+  scale:1;opacity:1;transition:color .12s,border-color .12s,background .12s,scale calc(var(--d) * .95) cubic-bezier(.34,1.6,.64,1),opacity calc(var(--d) * .5) ease-out}
+.ring-hub-glyph{display:grid;place-items:center;transition:rotate var(--d) var(--e-pop)}
+.ring-hub-glyph svg{width:calc(min(var(--hub),46px) * .36);height:calc(min(var(--hub),46px) * .36)}
+.ring-hub-glyph i{display:block;width:9px;height:9px;border-radius:50%;background:var(--accent)}
+.ring[data-hub=logo] .ring-hub-glyph{color:var(--accent)}
+.ring[data-hub=logo] .ring-hub-glyph svg{width:calc(min(var(--hub),46px) * .5);height:calc(min(var(--hub),46px) * .5)}
+.ring .ring-hub:hover,.ring[data-cancel] .ring-hub{background:color-mix(in srgb,var(--accent) 12%,var(--bg));border-color:var(--accent);color:var(--accent)}
+.ring-hub-text{display:none}
+.ring[data-labels=center] .ring-hub{gap:3px;padding:10px}
+.ring[data-labels=center] .ring-hub-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:100%;text-align:center;font-size:var(--label-size);line-height:1.25;color:var(--muted)}
+.ring[data-labels=center][data-label] .ring-hub-text{color:var(--text);font-weight:500;font-size:calc(var(--label-size) + 1px)}
+.ring[data-labels=center][data-label] .ring-hub-glyph{display:none}
+/* Una muesca alrededor del centro señala hacia dónde se apunta. */
+.ring-hub::before{content:'';position:absolute;inset:-7px;border-radius:50%;pointer-events:none;opacity:0;transition:opacity .15s;
+  background:conic-gradient(from calc(var(--aim) + 90deg - 22deg),var(--accent) 0 44deg,transparent 0);
+  -webkit-mask:radial-gradient(closest-side,transparent calc(100% - 3px),#000 calc(100% - 2.5px));mask:radial-gradient(closest-side,transparent calc(100% - 3px),#000 calc(100% - 2.5px))}
+.ring[data-pointer][data-aiming] .ring-hub::before{opacity:1}
+
+/* El sector entero se ilumina: el blanco no es el círculo, es la dirección. */
+.ring-pointer{position:absolute;left:0;top:0;width:calc(var(--aim-r,var(--ring-r)) * 2 + var(--size) + 40px);aspect-ratio:1;translate:-50% -50%;border-radius:50%;pointer-events:none;opacity:0;
+  transition:opacity .16s,width .22s var(--e-out);
+  background:conic-gradient(from calc(var(--aim) + 90deg - var(--aim-step,30deg) / 2),color-mix(in srgb,var(--accent) 15%,transparent) 0 var(--aim-step,30deg),transparent 0);
+  -webkit-mask:radial-gradient(closest-side,transparent calc(var(--hub) / 2 + 4px),#0009 calc(var(--hub) / 2 + 24px),#000 62%,transparent 88%);mask:radial-gradient(closest-side,transparent calc(var(--hub) / 2 + 4px),#0009 calc(var(--hub) / 2 + 24px),#000 62%,transparent 88%)}
+.ring[data-pointer][data-aiming] .ring-pointer{opacity:1}
+.ring[data-style=ring][data-aiming=opt] .ring-pointer{width:calc(var(--ring-r) * 2 + var(--size) + 22px);background:conic-gradient(from calc(var(--aim) + 90deg - var(--aim-step) / 2),color-mix(in srgb,var(--accent) 26%,transparent) 0 var(--aim-step),transparent 0);
+  -webkit-mask:radial-gradient(closest-side,transparent calc(100% - var(--size) - 22px),#000 calc(100% - var(--size) - 21px));mask:radial-gradient(closest-side,transparent calc(100% - var(--size) - 22px),#000 calc(100% - var(--size) - 21px))}
+
+/* La etiqueta sale debajo del anillo —o encima, si no cabe—; nunca pisa un círculo. */
+.ring-label{position:absolute;left:0;top:0;max-width:280px;padding:5px 12px;border-radius:999px;background:var(--text);color:var(--bg);font-size:var(--label-size);font-weight:500;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 6px 18px rgb(0 0 0 / calc(var(--shadow) * .5));opacity:0;pointer-events:none;transform:translate(-50%,-50%) translate(var(--label-x,0px),var(--label-y,0px));transition:opacity .12s}
+.ring[data-labels=hover][data-label] .ring-label{opacity:1}
+
+/* --- Abrir y cerrar ------------------------------------------------------------------ */
+/* Cerrados, todos descansan bajo el centro: abrir es soltarlos hacia fuera. */
+.ring:not([data-open]) .ring-opt{--rr:0px;--sweep:-75deg;scale:.35;opacity:0;box-shadow:none;--delay:0s}
+.ring:not([data-open]) .ring-hub{scale:.5;opacity:0}
+.ring:not([data-open]) .ring-hub-glyph{rotate:-90deg}
+.ring:not([data-open]) .ring-disc{scale:.2;opacity:0}
+.ring[data-style=ring]:not([data-open])::before{scale:.4;rotate:-40deg;opacity:0}
+.ring[data-animation=expand]:not([data-open]) .ring-opt{--sweep:0deg}
+.ring[data-animation=bloom] :is(.ring-opt,.ring-sub){--delay:calc(var(--i) * var(--d) * .09)}
+.ring[data-animation=bloom]:not([data-open]) .ring-opt{--rr:var(--ring-r);--sweep:0deg;scale:0;--delay:0s}
+.ring[data-animation=fade]:not([data-open]) .ring-opt{--rr:var(--ring-r);--sweep:0deg;scale:.94}
+.ring[data-animation=fade] :is(.ring-opt,.ring-sub){--delay:0s}
+/* El submenú brota del círculo que lo abre, no del centro. */
+.ring-arc:not([data-open]) .ring-sub{--rr:var(--from-r,var(--ring-r));scale:.3;opacity:0;--delay:0s}
+.ring-arc .ring-sub{--delay:calc(var(--i) * var(--d) * .045)}
+
+/* Cerrar es abrir del revés: se recogen hacia el centro —el último en salir es el primero en
+   volver— y mientras dura el anillo ya no se puede tocar. */
+.ring[data-closing]{pointer-events:none}
+.ring[data-closing] .ring-opt{--rr:0px;--sweep:60deg}
+.ring[data-closing] .ring-sub{--rr:var(--from-r,var(--ring-r));--sweep:0deg}
+.ring[data-closing] :is(.ring-opt,.ring-sub){scale:.3;opacity:0;box-shadow:none;
+  transition:--rr calc(var(--d) * .62) var(--e-in),--sweep calc(var(--d) * .62) cubic-bezier(.4,0,.8,.4),scale calc(var(--d) * .62) var(--e-in),opacity calc(var(--d) * .5) ease-in calc(var(--d) * .1),box-shadow .12s,translate calc(var(--d) * .62) var(--e-in);
+  transition-delay:calc((var(--n) - 1 - var(--i)) * 8ms)}
+.ring[data-closing]:is([data-animation=bloom],[data-animation=fade]) .ring-opt{--rr:var(--ring-r);--sweep:0deg;scale:.7}
+.ring[data-closing] .ring-hub{scale:.4;opacity:0;transition:scale calc(var(--d) * .62) var(--e-in),opacity calc(var(--d) * .5) ease-in;transition-delay:calc(var(--n) * 8ms)}
+.ring[data-closing] .ring-hub-glyph{rotate:90deg;transition:rotate calc(var(--d) * .62) ease-in}
+.ring[data-closing] :is(.ring-label,.ring-pointer){opacity:0;transition:opacity .1s}
+.ring[data-closing] .ring-disc{scale:.2;opacity:0;transition:scale calc(var(--d) * .7) ease-in,opacity calc(var(--d) * .55) ease-in}
+.ring[data-style=ring][data-closing]::before{scale:.3;rotate:40deg;opacity:0;transition:scale calc(var(--d) * .62) var(--e-in),rotate calc(var(--d) * .62) ease-in,opacity calc(var(--d) * .5) ease-in}
+/* Lo elegido destaca un instante; lo demás se aparta. */
+.ring[data-chosen] :is(.ring-opt,.ring-sub).chosen{scale:1.2;background:color-mix(in srgb,var(--accent) 30%,var(--solid));border-color:var(--accent);color:var(--accent)}
+.ring[data-chosen] :is(.ring-opt,.ring-sub):not(.chosen){opacity:.3}
+
+.ring[data-animation=none] *,.ring[data-animation=none]::before{transition:none!important}
+@media (prefers-reduced-motion:reduce){.ring *,.ring::before{transition:none!important}}
+
+/* La ventana del menú es transparente: solo se ve el anillo. */
+body.overlay{background:transparent!important;margin:0;width:100vw;height:100vh;overflow:hidden}
+body.overlay .ring-host{position:fixed;inset:0}
+.ring.no-anim *,.ring.no-anim::before{transition:none!important}
+
+/* --- Más aspectos ------------------------------------------------------------------------- */
+/* «Tarta»: un disco entero dividido en sectores, el sector apuntado se ilumina de punta a punta. */
+.ring[data-style=pie]::before{content:'';position:absolute;left:0;top:0;width:calc(var(--ring-r) * 2 + var(--size) + 26px);aspect-ratio:1;translate:-50% -50%;border-radius:50%;pointer-events:none;
+  background:repeating-conic-gradient(from calc(var(--rot) + var(--step) / 2),var(--item-line) 0 .6deg,transparent .6deg var(--step)),color-mix(in srgb,var(--panel) var(--opacity),transparent);
+  box-shadow:0 12px 36px rgb(0 0 0 / calc(var(--shadow) * .6)),0 0 0 1px var(--item-line);
+  scale:1;rotate:0deg;opacity:1;transition:scale var(--d) var(--e-out),rotate calc(var(--d) * 1.2) var(--e-out),opacity calc(var(--d) * .5) ease-out}
+.ring[data-style=pie] .ring-opt:not(.aim){background:transparent;border-color:transparent;box-shadow:none}
+.ring[data-style=pie] .ring-opt[data-tint]:not(.aim){background:color-mix(in srgb,var(--tint) 16%,transparent)}
+.ring[data-style=pie][data-aiming=opt] .ring-pointer{width:calc(var(--ring-r) * 2 + var(--size) + 26px);background:conic-gradient(from calc(var(--aim) + 90deg - var(--aim-step) / 2),color-mix(in srgb,var(--accent) 24%,transparent) 0 var(--aim-step),transparent 0);
+  -webkit-mask:radial-gradient(closest-side,transparent calc(var(--hub) / 2 + 2px),#000 calc(var(--hub) / 2 + 3px));mask:radial-gradient(closest-side,transparent calc(var(--hub) / 2 + 2px),#000 calc(var(--hub) / 2 + 3px))}
+.ring[data-style=pie]:not([data-open])::before{scale:.3;rotate:-50deg;opacity:0}
+.ring[data-style=pie][data-closing]::before{scale:.3;rotate:40deg;opacity:0;transition:scale calc(var(--d) * .62) var(--e-in),rotate calc(var(--d) * .62) ease-in,opacity calc(var(--d) * .5) ease-in}
+/* «Cristal»: círculos translúcidos con un brillo en el borde superior. */
+.ring[data-style=glass] :is(.ring-opt,.ring-sub):not(.aim){background:color-mix(in srgb,var(--solid) calc(var(--opacity) * .5),transparent);border-color:color-mix(in srgb,#fff 22%,transparent);
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 30%,transparent),inset 0 -8px 16px color-mix(in srgb,#000 12%,transparent),var(--sh);backdrop-filter:blur(10px) saturate(1.4)}
+.ring[data-style=glass] .ring-hub{background:color-mix(in srgb,var(--bg) 55%,transparent);border-color:color-mix(in srgb,#fff 20%,transparent);backdrop-filter:blur(10px)}
+/* «Mínimo»: solo iconos flotando; el fondo aparece al apuntar. */
+.ring[data-style=minimal] :is(.ring-opt,.ring-sub):not(.aim){background:transparent;border-color:transparent;box-shadow:none}
+.ring[data-style=minimal] .ring-glyph{filter:drop-shadow(0 2px 5px rgb(0 0 0 / calc(var(--shadow) * .8)))}
+.ring[data-style=minimal] .ring-hub:not(:hover){background:transparent;box-shadow:none}
+.ring[data-borderless] :is(.ring-opt,.ring-sub,.ring-hub):not(.aim):not(:hover){border-color:transparent}
+
+/* --- Más movimientos -------------------------------------------------------------------- */
+/* Cascada: salen de uno en uno, como fichas que caen en su sitio. */
+.ring[data-animation=cascade] :is(.ring-opt,.ring-sub){--delay:calc(var(--i) * var(--d) * .16)}
+.ring[data-animation=cascade]:not([data-open]) .ring-opt{--sweep:0deg;--delay:0s}
+/* Rebote: aparecen en su sitio con un salto elástico. */
+.ring[data-animation=pop] :is(.ring-opt,.ring-sub){--e-pop:cubic-bezier(.3,1.9,.5,1);--delay:calc(var(--i) * var(--d) * .035)}
+.ring[data-animation=pop]:not([data-open]) .ring-opt{--rr:var(--ring-r);--sweep:0deg;scale:0;--delay:0s}
+/* Órbita: el anillo entero llega girando, todos a la vez. */
+.ring[data-animation=orbit] .ring-opt{--delay:0s}
+.ring[data-animation=orbit]:not([data-open]) .ring-opt{--rr:var(--ring-r);--sweep:-200deg;scale:.6}
+/* Caída: bajan desde arriba hasta su sitio. */
+.ring[data-animation=drop] :is(.ring-opt,.ring-sub){--delay:calc(var(--i) * var(--d) * .06)}
+.ring[data-animation=drop]:not([data-open]) .ring-opt{--rr:var(--ring-r);--sweep:0deg;translate:0 -38px;scale:.9;--delay:0s}
+/* Zoom: llegan desde fuera, más grandes, y se recogen hasta su sitio. */
+.ring[data-animation=zoom] :is(.ring-opt,.ring-sub){--e-spring:cubic-bezier(.16,1,.3,1)}
+.ring[data-animation=zoom]:not([data-open]) .ring-opt{--rr:calc(var(--ring-r) * 1.45);--sweep:0deg;scale:1.25}

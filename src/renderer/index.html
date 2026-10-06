@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'"><title>HALO MENU</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="ring.css"><script src="../shared/geometry.js"></script></head>
+<body data-theme="carbon">
+<div class="app">
+  <aside class="nav">
+    <div class="brand"><span class="brand-mark" data-icon="ring"></span><span>HALO MENU</span><small>Preferencias</small></div>
+    <div class="nav-heading">Tu anillo</div>
+    <button class="active" data-page="actions"><span data-icon="ring"></span>Acciones</button>
+    <button data-page="appearance"><span data-icon="palette"></span>Tema y colores</button>
+    <button data-page="shape"><span data-icon="sliders-horizontal"></span>Forma y movimiento</button>
+    <div class="nav-heading">Control</div>
+    <button data-page="shortcut"><span data-icon="keyboard"></span>Atajo y gesto</button>
+    <button data-page="behavior"><span data-icon="mouse-pointer-click"></span>Comportamiento</button>
+    <div class="nav-heading">HALO</div>
+    <button data-page="data"><span data-icon="archive"></span>Copias y datos</button>
+    <button data-page="about"><span data-icon="info"></span>Acerca de</button>
+    <div class="nav-bottom">
+      <div class="status-card"><div class="status-line"><i class="status-dot"></i><span id="shortcut-status">Activo</span></div><div class="keys" id="nav-keys"></div><small id="nav-gesture"></small></div>
+      <button class="try-button" id="try"><span data-icon="ring"></span>Probar el anillo</button>
+      <button class="quit-button" id="quit"><span data-icon="power"></span>Salir de HALO</button>
+    </div>
+  </aside>
+  <main class="content">
+    <header class="topbar"><div class="crumbs"><span id="crumb">Acciones</span></div><div class="top-tools"><button class="pin-button" id="pin" aria-pressed="false" title="Muestra el anillo real junto al editor y lo actualiza con cada cambio"><span data-icon="ring"></span><b>Ver en vivo</b></button><button class="tool" id="undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer" data-icon="undo"></button><button class="tool" id="redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer" data-icon="redo"></button><span id="save-state" class="save-state" role="status"><span data-icon="check"></span><b>Guardado</b></span></div><div class="window-buttons"><button data-window="minimize" aria-label="Minimizar" data-icon="minus"></button><button data-window="maximize" aria-label="Maximizar" data-icon="square"></button><button class="close" data-window="close" aria-label="Cerrar y mantener en la bandeja" data-icon="x"></button></div></header>
+    <div class="scroll" id="scroll">
+      <div id="notice" role="alert" hidden><span data-icon="triangle-alert"></span><p></p><button aria-label="Descartar aviso" data-icon="x"></button></div>
+
+      <!-- ACCIONES ------------------------------------------------------------------------>
+      <section class="page" id="page-actions">
+        <div class="page-head"><div class="eyebrow">Tu anillo</div><h1>Acciones</h1><p>Lo que necesitas, alrededor del cursor. Arrastra para ordenar, para meter algo en el anillo desde la biblioteca o para sacarlo; la × lo quita del anillo sin perderlo.</p></div>
+        <div class="profiles card" id="profiles-card">
+          <div class="profile-tabs" id="profile-tabs" role="tablist" aria-label="Perfiles"></div>
+          <button class="tool" id="profile-add" title="Nuevo perfil (copia del actual)" aria-label="Nuevo perfil" data-icon="plus"></button>
+          <div class="profile-edit"><input id="profile-name" maxlength="30" aria-label="Nombre del perfil" spellcheck="false"><input id="profile-hotkey" class="recorder" readonly placeholder="Atajo para cambiar a este perfil" aria-label="Grabar atajo del perfil"><button class="tool" id="profile-clear-hotkey" title="Quitar atajo del perfil" aria-label="Quitar atajo del perfil" data-icon="x"></button><button class="tool danger" id="profile-delete" title="Eliminar este perfil" aria-label="Eliminar perfil" data-icon="trash-2"></button></div>
+        </div>
+        <div class="studio">
+          <div class="card list-card">
+            <div class="card-head"><span>Anillo <b id="count">8</b></span><div><button class="tool" id="add" title="Añadir acción" aria-label="Añadir acción" data-icon="plus"></button><button class="tool" id="add-app" title="Añadir una aplicación instalada" aria-label="Añadir aplicación" data-icon="app-window"></button><button class="tool" id="add-group" title="Añadir grupo" aria-label="Añadir grupo" data-icon="folder-plus"></button></div></div>
+            <div id="actions" role="listbox" aria-label="Acciones del anillo"></div>
+            <div class="card-foot">Hasta 16 en el anillo y 12 por grupo, con dos niveles de grupos. Suelta aquí lo que arrastres desde la biblioteca.</div>
+          </div>
+          <div class="card stage-card">
+            <div class="card-head"><span><i class="status-dot"></i>Vista previa</span><div><button class="tool" id="replay" title="Repetir animación" aria-label="Repetir animación" data-icon="rotate-ccw"></button></div></div>
+            <div class="stage" id="stage"></div>
+            <div class="stage-foot"><span data-icon="mouse-pointer-2"></span>Apunta a un círculo y pulsa para editarlo. Los grupos se abren en un arco; los subgrupos, en otro más afuera.</div>
+          </div>
+          <div class="card inspector" id="inspector">
+            <div class="insp-head"><span class="insp-glyph" id="insp-glyph"></span><div class="insp-title"><input id="action-name" maxlength="50" aria-label="Nombre de la acción" spellcheck="false"><small id="insp-where"></small></div></div>
+            <div class="field"><span class="field-label">Qué hace</span><div class="types" id="types"></div></div>
+            <div class="field" id="target-field"><span class="field-label" id="target-label">Destino</span>
+              <select id="system-target"><option value="home">Carpeta personal · Explorador</option><option value="downloads">Descargas</option><option value="documents">Documentos</option><option value="desktop">Escritorio</option><option value="pictures">Imágenes</option><option value="music">Música</option><option value="videos">Vídeos</option><option value="__folder" hidden></option><option value="__other">Otra carpeta…</option></select>
+              <div class="target-input" id="path-target"><button class="chip" id="pick-app"><span data-icon="layout-grid"></span>Instaladas…</button><input id="action-path" placeholder="Elige una aplicación, archivo o carpeta" spellcheck="false"><button class="tool boxed" id="pick-file" title="Elegir aplicación o archivo" aria-label="Elegir aplicación o archivo" data-icon="file"></button><button class="tool boxed" id="pick-folder" title="Elegir carpeta" aria-label="Elegir carpeta" data-icon="folder"></button></div>
+              <input id="action-url" placeholder="https://…" spellcheck="false">
+              <input id="action-keys" class="recorder" readonly placeholder="Haz clic y pulsa la combinación" aria-label="Grabar combinación que se enviará">
+              <textarea id="action-text" rows="3" maxlength="4096" placeholder="Texto que se pegará donde esté el cursor"></textarea>
+              <div class="group-tools" id="group-tools"><button class="chip" id="group-add"><span data-icon="plus"></span>Añadir acción dentro</button><button class="chip" id="group-add-sub"><span data-icon="folder-plus"></span>Añadir subgrupo</button></div>
+              <div class="hint" id="target-hint"></div>
+            </div>
+            <div class="field"><span class="field-label">Icono</span><div class="icon-tools"><button class="chip" id="choose-icon"><span id="icon-current"></span>Elegir icono</button><button class="chip" id="choose-image"><span data-icon="image"></span>Imagen…</button><button class="tool" id="clear-image" title="Quitar imagen" aria-label="Quitar imagen" data-icon="x"></button></div><div class="hint" id="icon-hint"></div></div>
+            <div class="field"><span class="field-label">Color</span><div class="swatches" id="item-colors"></div></div>
+            <div class="field"><span class="field-label">Atajo directo</span><div class="target-input"><input id="action-hotkey" class="recorder" readonly placeholder="Ninguno · haz clic y pulsa una combinación" aria-label="Grabar atajo directo"><button class="tool boxed" id="clear-hotkey" title="Quitar atajo directo" aria-label="Quitar atajo directo" data-icon="x"></button></div><div class="hint" id="hotkey-hint"></div></div>
+            <div class="field" id="place-field"><span class="field-label">Ubicación</span><select id="action-place"></select></div>
+            <div class="insp-actions"><button class="tool" id="move-up" title="Mover antes" aria-label="Mover antes" data-icon="arrow-left"></button><button class="tool" id="move-down" title="Mover después" aria-label="Mover después" data-icon="arrow-right"></button><button class="tool" id="duplicate" title="Duplicar" aria-label="Duplicar" data-icon="copy-plus"></button><span></span><button class="tool danger" id="remove" title="Eliminar" aria-label="Eliminar" data-icon="trash-2"></button></div>
+          </div>
+        </div>
+        <div class="card library" id="library-card">
+          <div class="card-head"><span><span data-icon="archive"></span>Biblioteca <b id="library-count">0</b></span><div><button class="chip" id="library-add-app"><span data-icon="app-window"></span>Añadir aplicaciones</button><button class="chip" id="library-add"><span data-icon="plus"></span>Nueva acción</button></div></div>
+          <div class="library-shelf" id="library" aria-label="Biblioteca de acciones"></div>
+          <div class="card-foot">Acciones guardadas fuera del anillo. Arrástralas a la lista o a la vista previa para usarlas (o haz doble clic); arrastra aquí una del anillo para guardarla. Hasta 40.</div>
+        </div>
+      </section>
+
+      <!-- TEMA Y COLORES -------------------------------------------------------------------->
+      <section class="page" id="page-appearance" hidden>
+        <div class="split"><div>
+          <div class="page-head"><div class="eyebrow">Dale tu toque</div><h1>Tema y colores</h1><p>Un anillo que se sienta como tuyo, con las paletas de LINDE.</p></div>
+          <h3>Tema</h3>
+          <div class="theme-options" id="themes"></div>
+          <div class="setting-row"><div><strong>Color de acento</strong><small>El que señala hacia dónde apuntas, el centro y los detalles.</small></div><div class="swatches" id="accents"></div></div>
+          <h3>Iconos</h3>
+          <div class="setting-row"><div><strong>Estilo de iconos</strong><small>Los de LINDE: de línea, o a color, cada uno en el color de lo que es o hace.</small></div><div class="segmented" data-setting="iconStyle"><button data-value="linea"><span data-icon="folder"></span>Línea</button><button data-value="color"><span data-icon="folder" data-variant="color"></span>Color</button></div></div>
+          <div class="setting-row"><div><strong>Iconos del sistema</strong><small>Usa el icono real de cada aplicación, archivo y carpeta cuando existe.</small></div><input type="checkbox" role="switch" data-setting="nativeIcons"></div>
+          <h3>Nombres</h3>
+          <div class="setting-row"><div><strong>Dónde se leen</strong><small>Al apuntar sale una etiqueta bajo el anillo. También pueden ir fijos o en el centro.</small></div><div class="segmented" data-setting="labels"><button data-value="hover">Al apuntar</button><button data-value="center">En el centro</button><button data-value="always">Siempre</button><button data-value="none">Ocultos</button></div></div>
+          <div class="setting-row range"><div><strong>Tamaño del texto</strong></div><input type="range" min="9" max="16" step="1" data-setting="labelSize"><output data-for="labelSize"></output></div>
+          <h3>Centro</h3>
+          <div class="setting-row"><div><strong>Qué muestra el centro</strong><small>Al pulsarlo siempre se cierra el anillo.</small></div><div class="segmented" data-setting="hub"><button data-value="close"><span data-icon="x"></span>Cerrar</button><button data-value="logo"><span data-icon="ring"></span>Anillo</button><button data-value="dot"><span data-icon="circle-dot"></span>Punto</button></div></div>
+        </div><aside class="preview-card card" data-preview></aside></div>
+      </section>
+
+      <!-- FORMA Y MOVIMIENTO ----------------------------------------------------------------->
+      <section class="page" id="page-shape" hidden>
+        <div class="split"><div>
+          <div class="page-head"><div class="eyebrow">A tu medida</div><h1>Forma y movimiento</h1><p>Cómo es el anillo y cómo llega. Cada cambio se ve al momento.</p></div>
+          <h3>Estilo</h3>
+          <div class="style-options" data-setting="style">
+            <button data-value="bubbles"><span class="style-art bubbles"><i></i><i></i><i></i><i></i><i></i><i></i><b></b></span><span>Burbujas<small>Círculos sueltos, como LINDE</small></span></button>
+            <button data-value="ring"><span class="style-art track"><i></i><i></i><i></i><i></i><i></i><i></i><b></b></span><span>Anillo<small>Una pista continua, como Logitech</small></span></button>
+            <button data-value="pie"><span class="style-art pie"><i></i><i></i><i></i><i></i><i></i><i></i><b></b></span><span>Tarta<small>Un disco dividido en sectores</small></span></button>
+            <button data-value="glass"><span class="style-art glass"><i></i><i></i><i></i><i></i><i></i><i></i><b></b></span><span>Cristal<small>Translúcido, con brillo</small></span></button>
+            <button data-value="minimal"><span class="style-art minimal"><i></i><i></i><i></i><i></i><i></i><i></i><b></b></span><span>Mínimo<small>Solo iconos flotando</small></span></button>
+          </div>
+          <div class="setting-row"><div><strong>Forma de los botones</strong></div><div class="segmented" data-setting="shape"><button data-value="circle"><span data-icon="circle"></span>Círculo</button><button data-value="squircle"><span data-icon="square"></span>Redondeado</button></div></div>
+          <div class="setting-row"><div><strong>Bordes</strong><small>Una línea fina alrededor de cada círculo y del centro.</small></div><input type="checkbox" role="switch" data-setting="itemBorder"></div>
+          <div class="setting-row"><div><strong>Indicador de dirección</strong><small>Ilumina el sector hacia el que apuntas y marca el centro con una muesca.</small></div><input type="checkbox" role="switch" data-setting="pointer"></div>
+          <h3>Medidas</h3>
+          <div class="setting-row range"><div><strong>Separación del centro</strong><small>Con muchas acciones se abre lo necesario para que no se toquen.</small></div><input type="range" min="60" max="220" step="1" data-setting="radius"><output data-for="radius"></output></div>
+          <div class="setting-row range"><div><strong>Tamaño de los círculos</strong></div><input type="range" min="36" max="80" step="1" data-setting="size"><output data-for="size"></output></div>
+          <div class="setting-row range"><div><strong>Tamaño del icono</strong></div><input type="range" min="30" max="80" step="1" data-setting="iconScale"><output data-for="iconScale"></output></div>
+          <div class="setting-row range" id="hub-size-row"><div><strong>Tamaño del centro</strong><small>Con los nombres «En el centro», el centro crece solo para que quepan.</small></div><input type="range" min="28" max="96" step="1" data-setting="hubSize"><output data-for="hubSize"></output></div>
+          <div class="setting-row range"><div><strong>Crecer al apuntar</strong><small>Cuánto se agranda el círculo hacia el que apuntas.</small></div><input type="range" min="100" max="135" step="1" data-setting="aimScale"><output data-for="aimScale"></output></div>
+          <div class="setting-row range"><div><strong>Giro</strong><small>Dónde empieza la primera acción. 0° es arriba.</small></div><input type="range" min="-180" max="180" step="5" data-setting="rotation"><output data-for="rotation"></output></div>
+          <h3>Profundidad</h3>
+          <div class="setting-row range"><div><strong>Opacidad de los círculos</strong></div><input type="range" min="30" max="100" step="1" data-setting="opacity"><output data-for="opacity"></output></div>
+          <div class="setting-row range"><div><strong>Velo de fondo</strong><small>Un disco tenue que separa el anillo de lo que haya debajo.</small></div><input type="range" min="0" max="100" step="1" data-setting="veil"><output data-for="veil"></output></div>
+          <div class="setting-row range"><div><strong>Sombra</strong></div><input type="range" min="0" max="100" step="1" data-setting="shadow"><output data-for="shadow"></output></div>
+          <h3>Movimiento</h3>
+          <div class="motion-options" data-setting="animation">
+            <button data-value="spiral"><span data-icon="refresh-cw"></span>Espiral<small>LINDE</small></button>
+            <button data-value="expand"><span data-icon="maximize-2"></span>Expansión</button>
+            <button data-value="bloom"><span data-icon="sparkles"></span>Florecer</button>
+            <button data-value="cascade"><span data-icon="list-ordered"></span>Cascada</button>
+            <button data-value="pop"><span data-icon="zap"></span>Rebote</button>
+            <button data-value="orbit"><span data-icon="rotate-cw"></span>Órbita</button>
+            <button data-value="drop"><span data-icon="arrow-down"></span>Caída</button>
+            <button data-value="zoom"><span data-icon="zoom-out"></span>Zoom</button>
+            <button data-value="fade"><span data-icon="blend"></span>Fundido</button>
+            <button data-value="none"><span data-icon="ban"></span>Sin animación</button>
+          </div>
+          <p class="section-p">Pulsa de nuevo una animación para volver a verla.</p>
+          <div class="setting-row range"><div><strong>Duración</strong><small>Se respeta «reducir movimiento» del sistema.</small></div><input type="range" min="0" max="800" step="10" data-setting="duration"><output data-for="duration"></output></div>
+        </div><aside class="preview-card card" data-preview></aside></div>
+      </section>
+
+      <!-- ATAJO Y GESTO ---------------------------------------------------------------------->
+      <section class="page narrow" id="page-shortcut" hidden>
+        <div class="page-head"><div class="eyebrow">Siempre a mano</div><h1>Atajo y gesto</h1><p>Abre el anillo desde cualquier aplicación, con el teclado o con un botón del ratón.</p></div>
+        <h3>Teclado</h3>
+        <div class="setting-row"><div><strong>Combinación</strong><small>Haz clic y pulsa la combinación. Necesita al menos un modificador.</small></div><div class="recorder-box"><input id="accelerator" class="recorder big" readonly aria-label="Grabar atajo"><div class="keys" id="accelerator-keys"></div></div></div>
+        <div class="setting-row"><div><strong>Activación</strong><small id="mode-hint"></small></div><div class="segmented" id="shortcut-mode"><button data-value="single">Una pulsación</button><button data-value="double">Doble pulsación</button><button data-value="hold">Mantener y soltar</button></div></div>
+        <div class="setting-row range" id="interval-row"><div><strong>Tiempo entre pulsaciones</strong></div><input id="interval" type="range" min="180" max="700" step="10"><output id="interval-output"></output></div>
+        <h3>Ratón</h3>
+        <p class="section-p">Mantén pulsado el botón, empuja el cursor hacia la acción y suelta. Si lo sueltas sin moverte, el anillo se queda abierto para elegir con un clic.</p>
+        <div class="mouse-options" id="mouse">
+          <button data-value="none"><span class="mouse-art"><i></i></span>Ninguno</button>
+          <button data-value="middle"><span class="mouse-art"><i class="wheel"></i></span>Rueda</button>
+          <button data-value="back"><span class="mouse-art"><i class="side back"></i></span>Lateral atrás</button>
+          <button data-value="forward"><span class="mouse-art"><i class="side forward"></i></span>Lateral adelante</button>
+        </div>
+        <h3>Más gestos</h3>
+        <div class="setting-row"><div><strong>Doble toque de una tecla</strong><small>Pulsa y suelta dos veces seguidas Ctrl, Alt o Mayús solos. Usarla con otra tecla (Ctrl + C) no cuenta.</small></div><div class="segmented" data-setting="modifierTap"><button data-value="none">No</button><button data-value="Control">Ctrl</button><button data-value="Alt">Alt</button><button data-value="Shift">Mayús</button></div></div>
+        <div class="setting-row"><div><strong>Esquina activa</strong><small>Lleva el cursor a una esquina de la pantalla y déjalo un instante.</small></div><div class="corner-picker" data-setting="hotCorner"><button data-value="top-left" title="Superior izquierda" aria-label="Esquina superior izquierda"></button><button data-value="none" class="corner-none" title="Ninguna">Ninguna</button><button data-value="top-right" title="Superior derecha" aria-label="Esquina superior derecha"></button><button data-value="bottom-left" title="Inferior izquierda" aria-label="Esquina inferior izquierda"></button><button data-value="bottom-right" title="Inferior derecha" aria-label="Esquina inferior derecha"></button></div></div>
+        <div class="setting-row"><div><strong>Cambiar de perfil</strong><small>Pasa al siguiente perfil y abre su anillo. Cada perfil puede tener además su propio atajo (en Acciones).</small></div><div class="target-input"><input id="next-profile-key" class="recorder" readonly placeholder="Ninguno · haz clic y pulsa" aria-label="Grabar atajo de siguiente perfil"><button class="tool boxed" id="clear-next-profile" title="Quitar" aria-label="Quitar atajo" data-icon="x"></button></div></div>
+        <div class="setting-row"><div><strong>Atajos directos</strong><small>Cada acción o grupo puede tener su propia combinación (en Acciones › Atajo directo). Un grupo se abre como un anillo propio.</small></div></div>
+        <div class="tester card"><div class="tester-head"><span class="tester-mark" data-icon="radar"></span><div><strong>Pruébalo ahora</strong><small>Cada cambio se aplica al momento. Usa cualquiera de tus gestos y se iluminará aquí.</small></div><button class="chip" id="tester-pin"><span data-icon="ring"></span>Ver en vivo</button><button class="chip" id="tester-try"><span data-icon="play"></span>Abrir el anillo</button></div><div class="tester-chips" id="tester-chips"></div><div class="tester-log" id="tester-log">Esperando un gesto…</div></div>
+        <div class="info-note" id="native-note"></div>
+        <div class="status-line big"><i class="status-dot"></i><span id="shortcut-status-2"></span></div>
+      </section>
+
+      <!-- COMPORTAMIENTO --------------------------------------------------------------------->
+      <section class="page narrow" id="page-behavior" hidden>
+        <div class="page-head"><div class="eyebrow">Sin sorpresas</div><h1>Comportamiento</h1><p>Dónde aparece el anillo y cómo se despide.</p></div>
+        <div class="setting-row"><div><strong>Dónde aparece</strong><small>Junto al cursor, el anillo se mete hacia dentro si estás cerca de un borde.</small></div><div class="segmented" data-setting="position"><button data-value="cursor"><span data-icon="mouse-pointer-2"></span>Junto al cursor</button><button data-value="center"><span data-icon="crosshair"></span>Centro de la pantalla</button></div></div>
+        <div class="setting-row"><div><strong>Cerrar al cambiar de aplicación</strong><small>Si haces clic en otra ventana, el anillo se recoge solo.</small></div><input type="checkbox" role="switch" data-setting="closeOnBlur"></div>
+        <h3>Con el teclado</h3>
+        <div class="shortcut-table">
+          <div><span class="keys"><kbd>←</kbd><kbd>→</kbd><kbd>Tab</kbd></span>Recorrer las acciones</div>
+          <div><span class="keys"><kbd>Intro</kbd></span>Elegir o abrir el grupo</div>
+          <div><span class="keys"><kbd>1</kbd>–<kbd>9</kbd></span>Elegir directamente por posición</div>
+          <div><span class="keys"><kbd>Retroceso</kbd></span>Volver del grupo al nivel anterior</div>
+          <div><span class="keys"><kbd>Esc</kbd></span>Cerrar el grupo o el anillo</div>
+          <div><span class="keys"><kbd>Clic derecho</kbd></span>Cerrar el anillo</div>
+        </div>
+        <div class="info-note">Un clic en cualquier punto de un sector elige su acción: no hace falta acertar en el círculo. Al cerrar el editor, HALO sigue en la bandeja del sistema.</div>
+      </section>
+
+      <!-- COPIAS Y DATOS --------------------------------------------------------------------->
+      <section class="page narrow" id="page-data" hidden>
+        <div class="page-head"><div class="eyebrow">Un espacio propio</div><h1>Copias y datos</h1><p>Sin cuentas ni nube. Tu configuración se guarda en este equipo.</p></div>
+        <div class="setting-row"><div><strong>Guardar una copia</strong><small>Exporta aspecto, atajo, acciones e imágenes a un archivo JSON.</small></div><button class="button" id="export"><span data-icon="file-down"></span>Exportar</button></div>
+        <div class="setting-row"><div><strong>Traer una configuración</strong><small>Admite copias de la versión 0.1; se traducen solas.</small></div><button class="button" id="import"><span data-icon="import"></span>Importar</button></div>
+        <div class="setting-row"><div><strong>Volver al inicio</strong><small>Recupera el anillo y los ajustes originales. Puedes deshacerlo con Ctrl+Z.</small></div><button class="button" id="reset"><span data-icon="rotate-ccw"></span>Restablecer</button></div>
+        <div class="local-path"><span>Archivo local</span><code id="config-path"></code></div>
+        <p class="settings-note">Las rutas de aplicaciones son propias de cada equipo. Las carpetas del sistema se adaptan a Windows, macOS y Linux.</p>
+      </section>
+
+      <!-- ACERCA DE ------------------------------------------------------------------------->
+      <section class="page narrow" id="page-about" hidden>
+        <div class="page-head"><div class="eyebrow">HALO</div><h1>HALO MENU <small id="version"></small></h1><p>Tus acciones, a un gesto.</p></div>
+        <div class="about-card card"><span class="about-mark" data-icon="ring"></span><div><strong>Menos distancia. Más intención.</strong><p>Un anillo de acciones para el escritorio, con el lenguaje visual de LINDE y el gesto de mantener, apuntar y soltar.</p></div></div>
+        <p class="settings-note">Tipografía Outfit (licencia OFL, en <code>assets/outfit-OFL.txt</code>). Iconos propios de LINDE. Los iconos del sistema pertenecen a sus aplicaciones y se obtienen en tiempo de ejecución. Los gestos de teclado y ratón usan <code>uiohook-napi</code> en un proceso aislado; no se guarda ni se envía nada de lo que escribes.</p>
+      </section>
+    </div>
+  </main>
+</div>
+<dialog id="icon-dialog"><header><h2>Elegir icono</h2><button class="tool" id="icon-close" aria-label="Cerrar" data-icon="x"></button></header><div class="icon-search"><span data-icon="search"></span><input id="icon-query" placeholder="Buscar: carpeta, música, copiar…" spellcheck="false" autocomplete="off"><small id="icon-count"></small></div><div class="icon-grid" id="icon-grid"></div></dialog>
+<dialog id="apps-dialog"><header><h2 id="apps-title">Elegir aplicación</h2><button class="tool" id="apps-close" aria-label="Cerrar" data-icon="x"></button></header><div class="icon-search"><span data-icon="search"></span><input id="apps-query" placeholder="Buscar aplicación…" spellcheck="false" autocomplete="off"><small id="apps-count"></small></div><div class="apps-list" id="apps-list"></div><footer class="apps-foot"><span>¿No está? Elige cualquier programa, archivo o acceso directo.</span><button class="button" id="apps-file"><span data-icon="file"></span>Archivo…</button></footer></dialog>
+<div id="toast" role="status" hidden></div>
+<script type="module" src="editor.js"></script>
+</body></html>

@@ -1,0 +1,63 @@
+{
+  "name": "halo-menu",
+  "productName": "HALO MENU",
+  "version": "0.2.0",
+  "description": "Tus acciones, a un gesto. Anillo de acciones de escritorio con el lenguaje de LINDE.",
+  "author": "HALO",
+  "main": "src/main/index.cjs",
+  "desktopName": "app.halo.menu.desktop",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "test:ui": "node tests/ui.cjs",
+    "test:native": "node tests/native.cjs",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:linux": "electron-builder --linux AppImage deb"
+  },
+  "optionalDependencies": {
+    "uiohook-napi": "1.5.4"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3",
+    "playwright-core": "1.63.0"
+  },
+  "build": {
+    "appId": "app.halo.menu",
+    "productName": "HALO MENU",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "signExecutable": false,
+      "icon": "src/renderer/assets/aptic.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "halo-menu"
+        }
+      }
+    }
+  }
+}
