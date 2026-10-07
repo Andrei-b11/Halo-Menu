@@ -380,6 +380,87 @@ dialog::backdrop{background:#0009;backdrop-filter:blur(4px)}
 .app-row.added .app-added{display:block}
 .app-row.added{color:var(--ink)}
 @media (max-width:1300px){.profiles{flex-wrap:wrap}.profile-edit{margin-left:0;width:100%}}
+/* A fixed workspace: only the list, library and inspector scroll. */
+body[data-workspace=actions] .scroll{overflow:hidden;padding:8px 20px 18px;display:flex;flex-direction:column}
+body[data-workspace=actions] #notice{flex-shrink:0;max-height:90px;overflow:auto}
+#page-actions{width:100%;min-height:0;flex:1;display:flex;flex-direction:column;position:relative;animation:none}
+.actions-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:4px 0 12px;flex-shrink:0}
+.actions-heading h1{font-size:25px;margin:5px 0}
+.actions-heading p{font-size:11.5px}
+#library-toggle{background:var(--active);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));white-space:nowrap}
+#library-toggle b{font-size:10px;background:var(--surface);padding:2px 6px;border-radius:5px}
+#profiles-card{flex-shrink:0;margin-bottom:12px}
+#page-actions .studio{flex:1;min-height:0;grid-template-columns:minmax(190px,.8fr) minmax(240px,1.4fr) minmax(270px,1fr);gap:12px;align-items:stretch}
+#page-actions .list-card{position:static;grid-row:auto;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#page-actions #actions{flex:1;min-height:0;max-height:none;overscroll-behavior:contain;scrollbar-gutter:stable}
+#page-actions .card-head{flex-shrink:0}
+#page-actions .list-card .card-foot{max-height:140px;overflow:auto;flex-shrink:0}
+#page-actions .list-card .card-foot p{font-size:10px;margin-top:6px}
+#page-actions .stage-card{position:relative;min-height:0}
+#page-actions .stage{flex:1;min-height:0;height:auto;margin:0 6px}
+#page-actions .stage-foot{flex-shrink:0;justify-content:center;text-align:center;line-height:1.5;padding:12px 8px}
+#page-actions .inspector{grid-column:auto;position:static;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:14px;gap:18px}
+.insp-head{padding-bottom:12px;border-bottom:1px solid var(--line)}
+.action-search{display:flex;align-items:center;gap:8px;padding:0 12px 8px;color:var(--muted);flex-shrink:0}
+.action-search input{width:100%;font-size:11px;padding:8px}
+.list-controls{display:flex;align-items:center;gap:4px;padding:0 10px 8px;flex-shrink:0}
+.list-controls .chip{font-size:10px}.list-controls small{font-size:9px;margin-left:auto}
+#select-many[aria-pressed=true]{background:var(--active);color:var(--ink)}
+.list-empty{padding:18px 12px;font-size:12px}
+.group-fold{display:inline-flex;flex-shrink:0;color:var(--muted);border-radius:4px;cursor:pointer}
+.group-fold:hover{color:var(--accent);background:var(--active)}
+.group-fold svg{width:12px;height:18px}
+.group-fold:focus-visible{outline:2px solid var(--accent)}
+.row-check{display:inline-grid;place-items:center;width:15px;height:15px;flex-shrink:0;border:1px solid var(--muted);border-radius:4px;font-size:11px}
+.row.selected .row-check{background:var(--accent);border-color:var(--accent);color:white}
+.batch-inspector h2{margin:0;font-size:21px;font-weight:500}
+.batch-inspector p{font-size:12px}.batch-inspector .button{justify-content:flex-start;white-space:normal;text-align:left;font-size:12px}
+.batch-pick{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.batch-pick input[type=color]{width:42px;height:34px;padding:3px}
+#batch-names{padding:0;margin:0;list-style:none;max-height:180px;overflow:auto;flex-shrink:0}
+#batch-names li{padding:8px 10px;margin-bottom:4px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:12px;overflow-wrap:anywhere}
+#batch-error{color:#e0a44f;min-height:16px}
+#batch-done{margin-top:auto;justify-content:center}
+.ring .batch-checked{outline:2px solid var(--accent);outline-offset:4px}
+.ring .batch-checked::before{content:'✓';position:absolute;right:-5px;top:-5px;display:grid;place-items:center;width:17px;height:17px;border-radius:50%;background:var(--accent);color:white;font-size:11px}
+.action-recipe{font-size:11px;line-height:1.6;padding:12px;background:var(--active);border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere}
+.ring-store{display:flex;justify-content:center;flex-shrink:0;border:1px dashed var(--line);border-radius:10px;margin:0 10px 10px;padding:10px;font-size:11px;color:var(--muted);text-align:left;min-height:53px}
+.ring-store small{font-size:10px;margin-top:3px}
+body[data-dragging] .ring-store{border-color:var(--accent);background:var(--active);color:var(--text)}
+.ring-store.drop-zone{background:var(--accent)!important;color:white!important}
+.ring-store.drop-zone small{color:inherit}
+#page-actions .library{position:absolute;z-index:5;inset:110px auto 0 0;width:min(460px,calc(100% - 285px));margin:0;display:flex;flex-direction:column;box-shadow:12px 10px 40px #0005;border-color:color-mix(in srgb,var(--accent) 25%,var(--line));overflow:hidden}
+.library-tools{display:flex;flex-direction:column;gap:8px;padding:0 14px 12px}
+#page-actions .library .card-head{height:auto;min-height:86px;flex-wrap:wrap;padding:12px 14px;gap:8px}
+#page-actions .library .card-head>div{width:100%}
+#library-close{margin-left:auto}
+.nav>button{text-align:left}
+.library-tabs{display:flex;gap:6px;padding:0 14px 12px;border-bottom:1px solid var(--line)}
+.library-tabs button{font-size:11px;flex:1}
+.library-tabs .selected{background:var(--active);color:var(--ink)}
+#library{display:flex;flex-direction:column;flex-wrap:nowrap;overflow:auto;flex:1;min-height:0;padding:10px;gap:6px;overscroll-behavior:contain}
+#library .tile{width:100%;max-width:none;flex-shrink:0;justify-content:flex-start;text-align:left;padding:10px;min-height:48px}
+#library .tile-name{flex:1;min-width:0}
+#library .tile-name small{font-size:10px;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#library .tile-add,#library .tile-remove{opacity:1}
+.personalize-card{margin-top:24px;padding:20px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(130deg,var(--active),var(--panel))}
+.personalize-card h3{font-size:18px;margin:7px 0}
+.personalize-card p{font-size:12px}
+.ring-palette{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:16px 0}
+.ring-palette label{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
+.ring-palette input{width:100%;height:42px;padding:4px;cursor:pointer}
+.palette-presets{display:flex;gap:8px;flex-wrap:wrap}
+.palette-presets button{border:1px solid var(--line);background:var(--panel)}
+.ring [draggable=true]{cursor:grab}
+.ring [draggable=true]:active{cursor:grabbing}
+.ring .drop-target{outline:3px solid var(--accent);outline-offset:5px}
+.insert-marker{position:absolute;width:28px;height:3px;background:var(--accent);border-radius:3px;translate:-50% -50%;box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 15%,transparent);pointer-events:none;z-index:3}
+.insert-marker::before,.insert-marker::after{content:'';position:absolute;top:-2px;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.insert-marker::before{left:-2px}.insert-marker::after{right:-2px}
+body[data-dragging] #stage :is(.ring-opt,.ring-sub){transition:none!important;scale:1}
+#stage[data-drop-hint]::after{content:attr(data-drop-hint);position:absolute;bottom:14px;left:50%;transform:translateX(-50%);max-width:95%;width:max-content;padding:8px 12px;border:1px solid var(--accent);border-radius:9px;background:var(--panel);color:var(--text);font-size:11px;text-align:center;pointer-events:none;z-index:3}
+@media(max-width:1180px){body[data-workspace=actions] .app{grid-template-columns:176px minmax(0,1fr)}body[data-workspace=actions] .brand{font-size:12px}body[data-workspace=actions] .scroll{padding:8px 12px 12px}#page-actions .studio{grid-template-columns:minmax(170px,.7fr) minmax(200px,1fr) 260px;gap:8px}#page-actions .row{gap:6px}.actions-heading p{max-width:360px}}
+@media(max-height:740px){.actions-heading .eyebrow,.actions-heading p{display:none}#page-actions .list-card .card-foot{max-height:94px}.actions-heading{margin-bottom:8px}#page-actions .library{top:92px}}
 /* Persistent clipboard inspector */
 #clipboard-tools { display: grid; gap: 9px; min-width: 0; }
 #clipboard-tools[hidden] { display: none; }

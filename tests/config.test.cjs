@@ -6,6 +6,15 @@ const path = require('node:path');
 const { defaults, validate, validateLenient, findItem, switchProfile, Store, boundsFor, DoubleTap } = require('../src/main/config.cjs');
 const geometry = require('../src/shared/geometry.js');
 
+test('appearance and gesture additions migrate old v2 configs and validate limits', () => {
+  const old = defaults();
+  for (const key of ['mouseMode', 'selectionMode', 'easing', 'wheelNavigation', 'dwellDelay', 'cornerDelay', 'response', 'stagger', 'borderWidth', 'roundness', 'customRingColors', 'ringBackground', 'ringForeground', 'ringAccent']) delete old[key];
+  assert.deepEqual(validate(old), defaults());
+  const next = { ...defaults(), mouseMode: 'double', selectionMode: 'dwell', customRingColors: true, ringAccent: '#123ABC', response: 0, stagger: 0 };
+  const clean = validate(next); assert.equal(clean.ringAccent, '#123abc'); assert.equal(clean.selectionMode, 'dwell');
+  for (const patch of [{ mouseMode: 'other' }, { selectionMode: 'other' }, { dwellDelay: 100 }, { cornerDelay: 2000 }, { response: -1 }, { ringAccent: 'red' }, { borderWidth: 5 }, { wheelNavigation: 'yes' }]) assert.throws(() => validate({ ...next, ...patch }));
+});
+
 test('configuration roundtrip preserves actions, submenus and geometry', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aptic-store-'));
   try { const store = new Store(root), config = defaults(); config.radius = 140; config.items.reverse(); store.write(config); assert.deepEqual(store.read().config, config); assert.equal(fs.existsSync(store.file + '.tmp'), false); }

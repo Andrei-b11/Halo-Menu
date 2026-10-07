@@ -10,6 +10,8 @@
     "start": "electron .",
     "test": "node --test tests/*.test.cjs",
     "test:ui": "node tests/ui.cjs",
+    "test:studio": "node tests/studio.cjs",
+    "test:organize": "node tests/organize-ui.cjs",
     "test:clipboard": "node tests/clipboard-ui.cjs",
     "test:paste": "node tests/explorer-paste.cjs",
     "test:native": "node tests/native.cjs",

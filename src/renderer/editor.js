@@ -24,10 +24,27 @@ const UNITS = { radius: ' px', size: ' px', iconScale: ' %', rotation: '°', opa
 const SOURCES = { shortcut: 'Atajo de teclado', mouse: 'Botón del ratón', modifier: 'Doble toque', corner: 'Esquina activa', hotkey: 'Atajo directo', profile: 'Perfil', button: 'Botón «Probar»', tray: 'Bandeja', menu: 'Anillo' };
 // Límites cómodos: más círculos que estos hacen los sectores tan estrechos que apuntar deja de ser un gesto.
 const MAX_ITEMS = 16, MAX_CHILDREN = 12, MAX_LEVEL = 2, MAX_LIBRARY = 40, MAX_PROFILES = 8;
+Object.assign(UNITS, { dwellDelay: ' ms', cornerDelay: ' ms', response: ' ms', stagger: ' %', borderWidth: ' px', roundness: ' %' });
+const RECIPES = [
+  ['Copiar', 'keys', 'CommandOrControl+C', 'copy'], ['Pegar', 'keys', 'CommandOrControl+V', 'clipboard-paste'],
+  ['Cortar', 'keys', 'CommandOrControl+X', 'scissors'], ['Seleccionar todo', 'keys', 'CommandOrControl+A', 'scan'],
+  ['Deshacer', 'keys', 'CommandOrControl+Z', 'undo'], ['Rehacer', 'keys', 'CommandOrControl+Y', 'redo'],
+  ['Buscar', 'keys', 'CommandOrControl+F', 'search'], ['Guardar', 'keys', 'CommandOrControl+S', 'save'],
+  ['Nueva pestaña', 'keys', 'CommandOrControl+T', 'square-plus'], ['Reabrir pestaña', 'keys', 'CommandOrControl+Shift+T', 'rotate-ccw'],
+  ['Cerrar pestaña', 'keys', 'CommandOrControl+W', 'x'], ['Cambiar ventana', 'keys', 'Alt+Tab', 'app-window'],
+  ['Descargas', 'system', 'downloads', 'download'], ['Documentos', 'system', 'documents', 'file-text'],
+  ['Escritorio', 'system', 'desktop', 'monitor'], ['Imágenes', 'system', 'pictures', 'image'],
+  ['Captura de pantalla', 'keys', 'Super+Shift+S', 'scan'], ['Mostrar escritorio', 'keys', 'Super+D', 'monitor']
+];
+let libraryCatalog = false;
 
 let state, config, saved, selected, page = 'actions', seenSwitches = 0;
 let stage = null, previews = [], saveTimer, saveSeq = 0, toastTimer, demoTimer;
 let history = [], future = [], lastSnap = '', lastKey = null, lastTime = 0;
+let inspectedId = null;
+let selectionMode = false;
+const checkedActions = new Set(), foldedGroups = new Set();
+const normalizeText = text => String(text).toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const isMac = () => state?.platform === 'darwin';
 
 function paintIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon, el.dataset.variant); }); }
@@ -106,6 +123,7 @@ function record(key) {
 function updateHistoryButtons() { $('#undo').disabled = !history.length; $('#redo').disabled = !future.length; }
 function travel(from, to) {
   if (!from.length) return;
+  selectionMode = false; checkedActions.clear();
   to.push(snap()); config = JSON.parse(from.pop()); lastSnap = snap(); lastKey = null;
   if (!locate(selected)) selected = config.items[0].id;
   renderAll(true); scheduleSave(120); updateHistoryButtons();
@@ -161,14 +179,27 @@ function locateIn(items, id) { for (const item of items) { if (item.id === id) r
 // --- Lista de acciones ----------------------------------------------------------------
 let dragId = null;
 function drawList() {
-  const host = $('#actions'); host.replaceChildren();
+  if (dragId) return;
+  const host = $('#actions'), scrollTop = host.scrollTop; host.replaceChildren();
+  const query = normalizeText($('#action-search').value.trim());
+  const matches = item => normalizeText(item.label + ' ' + summary(item) + ' ' + TYPE_NAME[item.type]).includes(query);
+  const subtreeMatches = item => matches(item) || (item.items || []).some(subtreeMatches);
   $('#count').textContent = config.items.length + '/' + MAX_ITEMS;
   const issues = new Set((state?.issues || []).map(i => i.id));
-  const add = (items, parent, level) => items.forEach((item, i) => {
+  let count = 0;
+  const add = (items, parent, level, inherited = false) => items.forEach((item, i) => {
+    if (query && !inherited && !subtreeMatches(item)) return;
     host.append(row(item, i, parent, level, issues.has(item.id) || incomplete(item)));
-    if (item.type === 'group') add(item.items, item, level + 1);
+    count++;
+    if (item.type === 'group' && (query || !foldedGroups.has(item.id))) add(item.items, item, level + 1, inherited || !!query && matches(item));
   });
   add(config.items, null, 0);
+  if (!count) { const empty = document.createElement('p'); empty.className = 'list-empty'; empty.textContent = 'No hay coincidencias. Prueba otro nombre, destino o tipo de acción.'; host.append(empty); }
+  $('#search-count').textContent = query ? count + ' visibles' : '';
+  const groups = allGroups(), allFolded = groups.length > 0 && groups.every(g => foldedGroups.has(g.item.id));
+  $('#fold-groups').title = $('#fold-groups').ariaLabel = allFolded ? 'Desplegar todos los grupos' : 'Plegar todos los grupos';
+  $('#fold-groups').disabled = !groups.length || !!query;
+  host.scrollTop = scrollTop;
   const loc = locate(selected);
   const target = loc && (loc.item.type === 'group' ? loc.item : loc.parent);
   $('#add').disabled = target ? target.items.length >= MAX_CHILDREN : config.items.length >= MAX_ITEMS;
@@ -177,13 +208,15 @@ function drawList() {
   $('#add-group').title = groupHost ? 'Añadir subgrupo dentro de «' + groupHost.label + '»' : 'Añadir grupo';
   $('#add-group').disabled = groupHost ? groupHost.items.length >= MAX_CHILDREN : config.items.length >= MAX_ITEMS;
   $('#add-app').disabled = target ? target.items.length >= MAX_CHILDREN : config.items.length >= MAX_ITEMS;
+  drawBatch();
 }
 function row(item, index, parent, level, unfinished) {
   const b = document.createElement('button');
-  b.className = 'row' + (item.id === selected ? ' selected' : '') + (unfinished ? ' unfinished' : '');
+  const active = selectionMode ? checkedActions.has(item.id) : item.id === selected;
+  b.className = 'row' + (active ? ' selected' : '') + (unfinished ? ' unfinished' : '');
   b.style.setProperty('--level', level);
   if (level) b.classList.add('child');
-  b.dataset.id = item.id; b.draggable = true; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(item.id === selected));
+  b.dataset.id = item.id; b.draggable = !selectionMode; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(active));
   const grip = document.createElement('span'); grip.className = 'row-grip'; grip.innerHTML = icon('grip');
   const glyph = document.createElement('span'); glyph.className = 'row-glyph';
   if (item.color) { glyph.dataset.tint = ''; glyph.style.setProperty('--tint', item.color); }
@@ -198,10 +231,19 @@ function row(item, index, parent, level, unfinished) {
   else { end.className = 'row-index'; end.textContent = String(index + 1).padStart(2, '0'); }
   const remove = document.createElement('span'); remove.className = 'row-remove'; remove.innerHTML = icon('x'); remove.title = 'Quitar del anillo (se guarda en la biblioteca)'; remove.setAttribute('role', 'button'); remove.setAttribute('aria-label', 'Quitar «' + item.label + '» del anillo');
   remove.onclick = e => { e.stopPropagation(); toLibrary(item.id); };
-  b.append(grip, glyph, copy, end, remove);
-  b.onclick = () => select(item.id);
-  b.ondragstart = e => { dragId = item.id; b.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', item.id); };
-  b.ondragend = () => { dragId = null; $$('.row').forEach(r => r.classList.remove('dragging', 'drop-before', 'drop-after', 'drop-into')); };
+  if (item.type === 'group') {
+    const fold = document.createElement('span'); fold.className = 'group-fold'; fold.innerHTML = icon(foldedGroups.has(item.id) ? 'chevron-right' : 'chevron-down');
+    fold.hidden = !!$('#action-search').value.trim();
+    fold.setAttribute('role', 'button'); fold.tabIndex = 0; fold.setAttribute('aria-expanded', String(!foldedGroups.has(item.id) || !!$('#action-search').value)); fold.setAttribute('aria-label', 'Plegar o desplegar «' + item.label + '»');
+    fold.onclick = e => { e.stopPropagation(); if (foldedGroups.has(item.id)) foldedGroups.delete(item.id); else foldedGroups.add(item.id); drawList(); $(`.row[data-id="${CSS.escape(item.id)}"] .group-fold`)?.focus({ preventScroll: true }); };
+    fold.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fold.click(); } };
+    b.append(fold);
+  }
+  if (selectionMode) { const check = document.createElement('span'); check.className = 'row-check'; check.textContent = active ? '✓' : ''; check.setAttribute('aria-hidden', 'true'); b.append(check); }
+  b.append(grip, glyph, copy, end, remove); remove.hidden = selectionMode;
+  b.onclick = e => { if (selectionMode || e.ctrlKey || e.metaKey) { selectionMode = true; toggleChecked(item.id); } else select(item.id); };
+  b.ondragstart = e => beginDrag(e, item.id);
+  b.ondragend = endDrag;
   b.ondragover = e => {
     if (!dragId || dragId === item.id) return;
     e.preventDefault();
@@ -211,9 +253,70 @@ function row(item, index, parent, level, unfinished) {
     b.classList.add('drop-' + where); b.dataset.drop = where;
   };
   b.ondragleave = () => b.classList.remove('drop-before', 'drop-after', 'drop-into');
-  b.ondrop = e => { e.preventDefault(); e.stopPropagation(); if (dragId) moveItem(dragId, item.id, b.dataset.drop || 'before'); };
+  b.ondrop = e => { e.preventDefault(); e.stopPropagation(); const id = dragId; endDrag(); if (id) moveItem(id, item.id, b.dataset.drop || 'before'); };
   return b;
 }
+
+function batchNodes() { return globalThis.haloOrganize.collect(config.items, checkedActions); }
+function drawBatch() {
+  for (const id of checkedActions) if (!locate(id) || locate(id).library) checkedActions.delete(id);
+  const nodes = batchNodes();
+  $('#inspector').hidden = selectionMode; $('#batch-inspector').hidden = !selectionMode;
+  $('#ring-store').disabled = selectionMode;
+  if (selectionMode) for (const id of ['add', 'add-app', 'add-group', 'add-clipboard-single', 'add-clipboard']) $('#' + id).disabled = true;
+  else { $('#add-clipboard-single').disabled = config.items.length >= MAX_ITEMS; $('#add-clipboard').disabled = config.items.length >= MAX_ITEMS; }
+  $('#actions').setAttribute('aria-multiselectable', String(selectionMode));
+  $('#select-many').setAttribute('aria-pressed', String(selectionMode));
+  $('#select-many').textContent = selectionMode ? 'Terminar selección' : 'Seleccionar varias';
+  $('#batch-title').textContent = nodes.length ? nodes.length + (nodes.length === 1 ? ' acción seleccionada' : ' acciones seleccionadas') : 'Selecciona acciones';
+  $('#batch-names').replaceChildren(...nodes.map(({ item }) => { const li = document.createElement('li'); li.textContent = item.label + (item.type === 'group' ? ' · ' + item.items.length + ' dentro' : ''); return li; }));
+  for (const id of ['batch-duplicate', 'batch-library', 'batch-apply-color', 'batch-reset-color']) $('#' + id).disabled = !nodes.length;
+  $('#batch-group').disabled = nodes.length < 2;
+  $$('#stage .ring-opt,#stage .ring-sub').forEach(button => {
+    button.draggable = !selectionMode;
+    button.classList.toggle('batch-checked', selectionMode && checkedActions.has(button.dataset.id));
+    button.classList.toggle('selected-item', !selectionMode && button.dataset.id === selected);
+  });
+}
+function toggleChecked(id) {
+  const loc = locate(id); if (!loc || loc.library) return;
+  if (checkedActions.has(id)) checkedActions.delete(id);
+  else {
+    for (const other of checkedActions) { const old = locate(other)?.item; if (old && (contains(old, id) || contains(loc.item, other))) checkedActions.delete(other); }
+    checkedActions.add(id);
+  }
+  $('#batch-error').textContent = ''; drawList();
+}
+function setSelectionMode(on) {
+  selectionMode = on; checkedActions.clear(); $('#batch-error').textContent = '';
+  drawList(); drawInspector();
+}
+function organizeSelection(operation, option) {
+  try {
+    const result = globalThis.haloOrganize.organize(config, [...checkedActions], operation, option);
+    config = result.config; checkedActions.clear(); result.selected.forEach(id => checkedActions.add(id));
+    if (operation === 'group' || operation === 'library') { selectionMode = false; checkedActions.clear(); }
+    selected = result.selected[0] || config.items[0].id;
+    $('#batch-error').textContent = ''; commit();
+    toast(result.count + ' acciones: ' + ({ group: 'grupo creado', duplicate: 'copias creadas', library: 'guardadas en biblioteca', color: 'color actualizado' }[operation]) + '. Ctrl + Z para deshacer.');
+    if (operation === 'group') { $('#action-name').focus(); $('#action-name').select(); }
+  } catch (error) { $('#batch-error').textContent = error.message; }
+}
+$('#select-many').onclick = () => setSelectionMode(!selectionMode);
+$('#batch-done').onclick = () => setSelectionMode(false);
+$('#batch-none').onclick = () => { checkedActions.clear(); drawList(); };
+$('#batch-all').onclick = () => {
+  const ids = new Set($$('#actions .row').map(row => row.dataset.id)); checkedActions.clear();
+  globalThis.haloOrganize.collect(config.items, ids).forEach(node => checkedActions.add(node.item.id)); drawList();
+};
+for (const operation of ['group', 'duplicate', 'library']) $('#batch-' + operation).onclick = () => organizeSelection(operation);
+$('#batch-apply-color').onclick = () => organizeSelection('color', $('#batch-color').value);
+$('#batch-reset-color').onclick = () => organizeSelection('color', '');
+$('#action-search').oninput = () => { $('#actions').scrollTop = 0; drawList(); };
+$('#fold-groups').onclick = () => {
+  const groups = allGroups(), expand = groups.every(g => foldedGroups.has(g.item.id));
+  groups.forEach(g => expand ? foldedGroups.delete(g.item.id) : foldedGroups.add(g.item.id)); drawList();
+};
 // Zonas donde soltar: el final del anillo (lista o vista previa) y la biblioteca.
 const outside = e => !dragId && [...(e.dataTransfer?.types || [])].includes('Files');
 function dropZone(el, onDrop, listFor) {
@@ -222,7 +325,7 @@ function dropZone(el, onDrop, listFor) {
   el.addEventListener('drop', e => {
     el.classList.remove('drop-zone');
     if (outside(e)) { e.preventDefault(); return dropFiles(e, listFor()); }
-    if (!dragId) return; e.preventDefault(); const id = dragId; dragId = null; onDrop(id);
+    if (!dragId) return; e.preventDefault(); e.stopPropagation(); const id = dragId; endDrag(); onDrop(id);
   });
 }
 // Carpetas, programas y archivos arrastrados desde el Explorador se convierten en acciones.
@@ -290,6 +393,7 @@ function moveItem(id, targetId, where) {
 function setValue(el, value) { if (document.activeElement !== el && el.value !== value) el.value = value; }
 function drawInspector() {
   const loc = locate(selected); if (!loc) return;
+  if (inspectedId !== selected) { $('#inspector').scrollTop = 0; inspectedId = selected; }
   const { item, parent, index, list, level } = loc;
   const glyph = $('#insp-glyph');
   glyph.toggleAttribute('data-tint', !!item.color); glyph.style.setProperty('--tint', item.color || 'transparent');
@@ -297,6 +401,8 @@ function drawInspector() {
   setValue($('#action-name'), item.label);
   const where = loc.library ? (parent ? 'Biblioteca › «' + parent.label + '»' : 'Biblioteca (fuera del anillo)') : parent ? (level > 1 ? 'Subgrupo' : 'Grupo') + ' «' + parent.label + '»' : 'Anillo';
   $('#insp-where').textContent = where + ' · ' + (index + 1) + ' de ' + list.length + ' · ' + TYPE_NAME[item.type];
+  $('#action-recipe').textContent = incomplete(item) ? 'Completa el destino para activar esta acción. El resto de tus ajustes sigue guardándose.' : 'Al elegir «' + item.label + '»: ' + TYPE_NAME[item.type] + ' · ' + summary(item) + (item.hotkey ? '. También con ' + prettyKeys(item.hotkey) : '') + '.';
+  $('#store-selected').hidden = !!locate(item.id)?.library;
   $('#inspector').classList.toggle('in-library', loc.library);
   $$('#types button').forEach(b => {
     b.classList.toggle('selected', b.dataset.type === item.type || (b.dataset.type === 'system' && item.type === 'folder'));
@@ -304,6 +410,7 @@ function drawInspector() {
     b.title = b.disabled ? 'Solo caben dos niveles de grupos' : TYPE_NAME[b.dataset.type];
   });
   const t = item.type;
+  $('#key-preset').hidden = t !== 'keys';
   $('#target-field').hidden = t === 'settings';
   // «Carpeta» reúne las del sistema y cualquier otra: la elegida aparece en el desplegable.
   const custom = $('#system-target option[value="__folder"]');
@@ -376,20 +483,28 @@ function previewMount(host, { replay = false, onSelect, hint, extra = 0 } = {}) 
   if (!w || !h) return null;
   const reach = geometry.reach(config) + (config.labels === 'always' ? 26 : 0);
   const zoom = Math.max(.3, Math.min(1, (w - 30) / (2 * reach), (h - 70 - extra) / (2 * reach + 40)));
-  return mountRadial(host, config, { mode: 'preview', clips: state.clips, anchor: { x: w / 2, y: h / 2 - 16 }, zoom, instant: !replay, hint, onSelect, onClose: () => {} });
+  return mountRadial(host, config, { mode: 'preview', editable: host.id === 'stage', clips: state.clips, anchor: { x: w / 2, y: h / 2 - 16 }, zoom, instant: !replay, hint, onSelect, onClose: () => {} });
 }
 // --- Biblioteca -------------------------------------------------------------------------
 function drawLibrary() {
+  if (dragId) return;
+  $('#library-card .card-foot').textContent = libraryCatalog ? 'Pulsa una acción para añadirla al anillo y personalízala en el inspector. Los atajos se envían a la aplicación activa.' : 'Arrastra al círculo o haz doble clic para añadir. Arrastra aquí desde el anillo para guardar. Hasta 40 acciones; puedes deshacer con Ctrl + Z.';
   const host = $('#library'); host.replaceChildren();
   $('#library-count').textContent = config.library.length + '/' + MAX_LIBRARY;
-  if (!config.library.length) { host.innerHTML = '<p class="library-empty">Vacía. Añade aplicaciones o arrastra aquí una acción del anillo.</p>'; return; }
-  config.library.forEach(item => {
+  $('#library-badge').textContent = config.library.length;
+  const query = $('#library-search').value.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const category = $('#library-filter').value;
+  const source = libraryCatalog ? RECIPES.filter(r => state.platform === 'win32' || !r[2].startsWith('Super+')).map(([label, type, target, glyph], i) => ({ id: 'recipe-' + i, label, type, target, icon: glyph, color: '' })) : config.library;
+  const items = source.filter(item => (category === 'all' || item.type === category || category === 'system' && item.type === 'folder') && (item.label + ' ' + summary(item)).toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(query));
+  if (!items.length) { host.innerHTML = '<p class="library-empty">' + (query || category !== 'all' ? 'No hay coincidencias. Prueba otra búsqueda o categoría.' : 'Tu biblioteca está vacía. Arrastra aquí una acción o explora las acciones preparadas.') + '</p>'; return; }
+  items.forEach(item => {
     const b = document.createElement('button'); b.className = 'tile' + (item.id === selected ? ' selected' : '') + (incomplete(item) ? ' unfinished' : ''); b.draggable = true; b.dataset.id = item.id;
     b.title = item.label + ' · ' + summary(item) + '\nArrastra al anillo o haz doble clic para añadirla.';
     const glyph = document.createElement('span'); glyph.className = 'row-glyph';
     if (item.color) { glyph.dataset.tint = ''; glyph.style.setProperty('--tint', item.color); }
     paintGlyph(glyph, item, config);
     const name = document.createElement('span'); name.className = 'tile-name'; name.textContent = item.label;
+    const detail = document.createElement('small'); detail.textContent = summary(item); name.append(detail);
     const add = document.createElement('span'); add.className = 'tile-add'; add.innerHTML = icon('plus'); add.title = 'Añadir al anillo'; add.setAttribute('role', 'button');
     add.onclick = e => { e.stopPropagation(); if (toRing(item.id)) toast('«' + item.label + '» añadida al anillo.'); };
     const del = document.createElement('span'); del.className = 'tile-remove'; del.innerHTML = icon('x'); del.title = 'Eliminar de la biblioteca'; del.setAttribute('role', 'button');
@@ -397,14 +512,48 @@ function drawLibrary() {
     b.append(glyph, name, add, del);
     b.onclick = () => select(item.id);
     b.ondblclick = () => toRing(item.id);
-    b.ondragstart = e => { dragId = item.id; b.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', item.id); };
-    b.ondragend = () => { dragId = null; b.classList.remove('dragging'); $$('.drop-zone').forEach(z => z.classList.remove('drop-zone')); };
+    b.ondragstart = e => beginDrag(e, item.id);
+    b.ondragend = endDrag;
+    if (libraryCatalog) {
+      b.draggable = false; del.remove();
+      b.title = 'Añadir «' + item.label + '» al anillo';
+      const addRecipe = () => { if (config.items.length >= MAX_ITEMS) return toast(fullMessage(null, config.items)); const copy = { ...item, id: newId() }; config.items.push(copy); selected = copy.id; commit(); toast('«' + copy.label + '» añadida. Puedes personalizarla en el inspector.'); };
+      b.onclick = addRecipe; b.ondblclick = null; add.onclick = e => { e.stopPropagation(); addRecipe(); };
+    }
     host.append(b);
   });
 }
 dropZone($('#library-card'), id => { const loc = locate(id); if (loc && !loc.library) toLibrary(id); else if (loc) moveTo(id, config.library, config.library.length); }, () => config.library);
 dropZone($('#actions'), id => toRing(id), () => config.items);
-dropZone($('#stage'), id => toRing(id), () => config.items);
+// Empty preview space is never an implicit removal target.
+dropZone($('#stage'), id => { if (locate(id)?.library) toRing(id); }, () => config.items);
+dropZone($('#ring-store'), toLibrary, () => config.library);
+function beginDrag(e, id) {
+  dragId = id; document.body.dataset.dragging = '';
+  stage?.clearAim();
+  e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
+}
+function endDrag() {
+  dragId = null; delete document.body.dataset.dragging;
+  $('#stage').removeAttribute('data-drop-hint');
+  $('#stage .insert-marker')?.remove();
+  $$('.dragging,.drop-zone,.drop-target,.drop-before,.drop-after,.drop-into').forEach(el => el.classList.remove('dragging', 'drop-zone', 'drop-target', 'drop-before', 'drop-after', 'drop-into'));
+}
+document.addEventListener('dragend', endDrag);
+function toggleLibrary(open) {
+  $('#library-card').hidden = !open; $('#library-toggle').setAttribute('aria-expanded', String(open));
+  if (open) { drawLibrary(); $('#library-search').focus({ preventScroll: true }); }
+}
+$('#library-toggle').onclick = () => toggleLibrary($('#library-card').hidden);
+$('#library-close').onclick = () => { toggleLibrary(false); $('#library-toggle').focus(); };
+$('#library-search').oninput = drawLibrary;
+$('#library-filter').onchange = drawLibrary;
+for (const [id, catalog] of [['library-saved', false], ['library-catalog', true]]) $('#' + id).onclick = () => {
+  libraryCatalog = catalog;
+  for (const tab of $$('.library-tabs button')) { const active = tab.id === id; tab.classList.toggle('selected', active); tab.setAttribute('aria-selected', String(active)); }
+  drawLibrary();
+};
+$('#ring-store').onclick = $('#store-selected').onclick = () => toLibrary(selected);
 $('#library-add').onclick = () => { const item = newItem('url'); if (config.library.length >= MAX_LIBRARY) return toast(fullMessage(null, config.library)); config.library.push(item); selected = item.id; commit(); setTimeout(() => { $('#action-name').focus(); $('#action-name').select(); }, 0); };
 $('#library-add-app').onclick = () => openApps('library');
 
@@ -414,6 +563,7 @@ $('#library-add-app').onclick = () => openApps('library');
 const activeProfile = () => config.profiles.find(p => p.id === config.activeProfile);
 function switchTo(id) {
   if (id === config.activeProfile) return;
+  selectionMode = false; checkedActions.clear(); $('#action-search').value = '';
   const target = config.profiles.find(p => p.id === id); if (!target) return;
   config.profiles = config.profiles.map(p => p.id === config.activeProfile ? { ...p, items: config.items } : p.id === id ? { ...p, items: null } : p);
   config.items = target.items; config.activeProfile = id; selected = config.items[0].id;
@@ -457,11 +607,88 @@ $('#profile-delete').onclick = () => {
 $('#profile-clear-hotkey').onclick = () => { activeProfile().hotkey = ''; commit(); };
 
 function drawStage(replay = false) {
-  stage = previewMount($('#stage'), { replay, hint: 'Elige', onSelect: item => select(item.id) });
+  $('#library-card').style.top = $('.studio').offsetTop + 'px';
+  $('#library-card').style.width = Math.min(390, Math.max(320, $('.list-card').clientWidth + 40)) + 'px';
+  stage?.destroy();
+  stage = previewMount($('#stage'), { replay, hint: 'Elige', onSelect: item => selectionMode ? toggleChecked(item.id) : select(item.id) });
   if (!stage) return;
   stage.reveal(selected); stage.mark(selected);
+  drawBatch();
 }
-$('#stage').addEventListener('pointermove', e => stage?.track(e.clientX, e.clientY));
+$('#stage').addEventListener('pointermove', e => { if (!dragId) stage?.queueTrack(e.clientX, e.clientY); });
+$('#stage').addEventListener('dragstart', e => { const button = e.target.closest('[data-id]'); if (button) beginDrag(e, button.dataset.id); });
+// Chromium can report the stage as the event target at the edge of a scaled
+// circle. Resolve the visible buttons by screen coordinates, with a small halo.
+function circleDropTarget(e) {
+  let closest = null, distance = Infinity;
+  for (const button of $$('#stage .ring-opt,#stage .ring-sub')) {
+    const r = button.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2, size = Math.max(r.width, r.height);
+    const angle = parseFloat(button.style.getPropertyValue('--a')) * Math.PI / 180;
+    const dx = e.clientX - x, dy = e.clientY - y, d = Math.hypot(dx, dy);
+    // Clockwise is "after" throughout the ring, including its left and bottom
+    // sides. Use the same tangent for submenus and rotated configurations.
+    const along = -Math.sin(angle) * dx + Math.cos(angle) * dy;
+    const across = Math.cos(angle) * dx + Math.sin(angle) * dy;
+    const side = Math.abs(along) > size * .32 && Math.abs(across) <= size / 2 + 10;
+    if (d > size / 2 + (side ? 26 : 12) || d >= distance) continue;
+    const where = side ? (along < 0 ? 'before' : 'after') : 'center';
+    const offset = (where === 'before' ? -1 : 1) * (size / 2 + 7);
+    closest = { button, where, x: x - Math.sin(angle) * offset, y: y + Math.cos(angle) * offset, angle };
+    distance = d;
+  }
+  return closest;
+}
+function clearCircleDrop() {
+  $$('#stage .drop-target').forEach(el => el.classList.remove('drop-target'));
+  $('#stage .insert-marker')?.remove(); $('#stage').removeAttribute('data-drop-hint');
+}
+function swapItems(id, targetId) {
+  const from = locate(id), to = locate(targetId);
+  if (!from || !to || id === targetId) return;
+  const problem = canPlace(from.item, to.parent, to.level - 1) || canPlace(to.item, from.parent, from.level - 1);
+  if (problem) return toast(problem);
+  from.list[from.index] = to.item; to.list[to.index] = from.item;
+  selected = id; commit(); toast('Posiciones intercambiadas. Se conservan las dos acciones.');
+}
+function groupItems(id, targetId) {
+  const from = locate(id), to = locate(targetId);
+  if (!from || !to || id === targetId) return;
+  if (contains(from.item, targetId) || contains(to.item, id)) return toast('No se puede agrupar una acción con uno de sus propios grupos.');
+  if (to.level + 1 + Math.max(height(from.item), height(to.item)) > MAX_LEVEL) return toast('Solo caben dos niveles de grupos.');
+  if (from.list.length <= minimum(from.parent, from.list)) return toast(lowMessage(from.parent));
+  const group = { id: newId(), label: 'Nuevo grupo', type: 'group', target: '', icon: 'layers', color: '', items: [to.item, from.item] };
+  to.list[to.index] = group; from.list.splice(from.index, 1);
+  selected = group.id; commit(); toast('Grupo creado con las dos acciones. Puedes cambiar su nombre.');
+}
+$('#stage').addEventListener('dragover', e => {
+  if (!dragId) return;
+  e.preventDefault(); e.stopPropagation();
+  const hit = circleDropTarget(e), target = hit && locate(hit.button.dataset.id)?.item;
+  clearCircleDrop();
+  $('#stage').classList.remove('drop-zone');
+  if (!target || target.id === dragId) return;
+  e.dataTransfer.dropEffect = 'move';
+  if (hit.where !== 'center') {
+    const marker = document.createElement('span'), rect = $('#stage').getBoundingClientRect();
+    marker.className = 'insert-marker'; marker.style.left = hit.x - rect.left + 'px'; marker.style.top = hit.y - rect.top + 'px'; marker.style.rotate = hit.angle + 'rad';
+    $('#stage').append(marker);
+    $('#stage').dataset.dropHint = (hit.where === 'before' ? 'Colocar antes de «' : 'Colocar después de «') + target.label + '»';
+  } else {
+    hit.button.classList.add('drop-target');
+    $('#stage').dataset.dropHint = target.type === 'group' && !e.shiftKey ? 'Añadir a «' + target.label + '»' : e.altKey ? 'Crear un grupo con ambas acciones' : 'Intercambiar con «' + target.label + '»';
+  }
+}, true);
+$('#stage').addEventListener('dragleave', e => { if (!$('#stage').contains(e.relatedTarget)) clearCircleDrop(); });
+$('#stage').addEventListener('drop', e => {
+  const hit = circleDropTarget(e); if (!dragId || !hit) return;
+  e.preventDefault(); e.stopPropagation(); const id = dragId, target = locate(hit.button.dataset.id)?.item; endDrag();
+  if (!target || id === target.id) return;
+  if (hit.where !== 'center') moveItem(id, target.id, hit.where);
+  else if (target.type === 'group' && !e.shiftKey) moveItem(id, target.id, 'into');
+  else if (e.altKey) groupItems(id, target.id);
+  else swapItems(id, target.id);
+}, true);
 $('#stage').addEventListener('pointerleave', () => stage?.clearAim());
 $('#replay').onclick = () => drawStage(true);
 
@@ -551,11 +778,12 @@ function buildPreviewCards() {
       + '<div class="preview-note"><span>Pasa el ratón por encima para apuntar</span><span data-gesture></span></div>';
     card.querySelector('[data-replay]').onclick = () => drawPreviews(true);
     const host = card.querySelector('.ring-host');
-    host.addEventListener('pointermove', e => { card.dataset.hover = ''; previews.find(p => p.host === host)?.api?.track(e.clientX, e.clientY); });
+    host.addEventListener('pointermove', e => { card.dataset.hover = ''; previews.find(p => p.host === host)?.api?.queueTrack(e.clientX, e.clientY); });
     host.addEventListener('pointerleave', () => { delete card.dataset.hover; previews.find(p => p.host === host)?.api?.clearAim(); });
   });
 }
 function drawPreviews(replay = false) {
+  previews.forEach(p => p.api?.destroy());
   previews = $$('.page:not([hidden]) [data-preview]').map(card => {
     const host = card.querySelector('.ring-host');
     return { card, host, api: previewMount(host, { replay, hint: 'Apunta', extra: 30 }) };
@@ -571,6 +799,7 @@ demoTimer = setInterval(() => {
 
 // --- Controles de ajustes -------------------------------------------------------------
 function buildStatic() {
+  RECIPES.filter(r => r[1] === 'keys' && (state.platform === 'win32' || !r[2].startsWith('Super+'))).forEach(([label, , target]) => $('#key-preset').add(new Option(label + ' · ' + prettyKeys(target), target)));
   const types = $('#types');
   for (const [type, name, glyph] of TYPES) {
     const b = document.createElement('button'); b.dataset.type = type; b.innerHTML = icon(glyph) + '<span></span>'; b.querySelector('span').textContent = name;
@@ -594,6 +823,7 @@ function renderControls() {
   $$('[data-setting]').forEach(el => {
     const key = el.dataset.setting, value = config[key];
     if (el.type === 'checkbox') el.checked = value;
+    else if (el.type === 'color') setValue(el, value);
     else if (el.type === 'range') { setValue(el, String(value)); el.style.setProperty('--fill', ((value - el.min) / (el.max - el.min) * 100) + '%'); }
     else el.querySelectorAll('[data-value]').forEach(b => b.classList.toggle('selected', b.dataset.value === value));
   });
@@ -606,7 +836,7 @@ function renderControls() {
   $$('#shortcut-mode [data-value]').forEach(b => { b.classList.toggle('selected', b.dataset.value === s.mode); b.disabled = b.dataset.value !== 'single' && !state.native; });
   $$('#mouse [data-value]').forEach(b => { b.classList.toggle('selected', b.dataset.value === config.mouse); b.disabled = b.dataset.value !== 'none' && !state.native; });
   $$('[data-setting="modifierTap"] [data-value]').forEach(b => { b.disabled = b.dataset.value !== 'none' && !state.native; });
-  $('#interval-row').hidden = s.mode !== 'double' && config.modifierTap === 'none';
+  $('#interval-row').hidden = s.mode !== 'double' && config.modifierTap === 'none' && !(config.mouse !== 'none' && config.mouseMode === 'double');
   setValue($('#interval'), String(s.interval)); $('#interval').style.setProperty('--fill', ((s.interval - 180) / 520 * 100) + '%');
   $('#interval-output').textContent = s.interval + ' ms';
   if (!$('#next-profile-key').classList.contains('recording')) $('#next-profile-key').value = config.nextProfileKey ? prettyKeys(config.nextProfileKey) : '';
@@ -620,7 +850,7 @@ function renderControls() {
 function gestureText() {
   const s = config.shortcut;
   const parts = [{ single: 'Pulsa', double: 'Doble pulsación de', hold: 'Mantén' }[s.mode] + ' ' + prettyKeys(s.accelerator)];
-  if (config.mouse !== 'none') parts.push({ middle: 'mantén la rueda', back: 'mantén el lateral atrás', forward: 'mantén el lateral adelante' }[config.mouse]);
+  if (config.mouse !== 'none') parts.push(({ hold: 'mantén', single: 'pulsa', double: 'doble clic en' }[config.mouseMode]) + ' ' + ({ middle: 'la rueda', back: 'el lateral atrás', forward: 'el lateral adelante' }[config.mouse]));
   if (config.modifierTap !== 'none') parts.push('doble ' + prettyKeys(config.modifierTap));
   if (config.hotCorner !== 'none') parts.push('esquina');
   return parts.join(' · ');
@@ -668,7 +898,17 @@ window.aptic.onGesture(event => {
 });
 
 // --- Acciones del editor --------------------------------------------------------------
-function select(id) { if (!locate(id)) return; selected = id; drawList(); drawLibrary(); drawInspector(); drawStage(); $(`.row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' }); }
+function select(id) {
+  if (!locate(id)) return;
+  if (selectionMode) { selectionMode = false; checkedActions.clear(); }
+  let parent = locate(id).parent; while (parent) { foldedGroups.delete(parent.id); parent = locate(parent.id)?.parent; }
+  selected = id;
+  drawList();
+  $$('.row,.tile').forEach(el => { const active = el.dataset.id === id; el.classList.toggle('selected', active); if (el.classList.contains('row')) el.setAttribute('aria-selected', String(active)); });
+  drawInspector(); stage?.reveal(id); stage?.mark(id);
+  const row = $(`.row[data-id="${CSS.escape(id)}"]`);
+  if (row) { const list = $('#actions'), rect = row.getBoundingClientRect(), bounds = list.getBoundingClientRect(); if (rect.top < bounds.top) list.scrollTop -= bounds.top - rect.top; else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom; }
+}
 function changeType(type) {
   const item = current(); if (!item || item.type === type || (type === 'system' && item.type === 'folder')) return;
   const loc = locate(item.id);
@@ -881,12 +1121,20 @@ const QUIET = ['duration', 'rotation', 'veil', 'shadow', 'opacity', 'hubSize', '
 $$('[data-setting]').forEach(el => {
   const key = el.dataset.setting;
   if (el.type === 'checkbox') el.onchange = () => { config[key] = el.checked; commit(); };
-  else if (el.type === 'range') el.oninput = () => { config[key] = Number(el.value); commit({ key, list: !QUIET.includes(key) }); };
+  else if (el.type === 'color') el.oninput = () => { config[key] = el.value; config.customRingColors = true; commit({ key, list: false }); };
+  else if (el.type === 'range') el.oninput = () => { config[key] = Number(el.value); commit({ key, list: false }); };
   else el.querySelectorAll('[data-value]').forEach(b => b.onclick = () => { const again = config[key] === b.dataset.value; config[key] = b.dataset.value; if (again && key === 'animation') return drawPreviews(true); commit({ replay: key === 'animation' || key === 'style' }); });
 });
 $$('#shortcut-mode [data-value]').forEach(b => b.onclick = () => { config.shortcut.mode = b.dataset.value; commit(); });
 $$('#mouse [data-value]').forEach(b => b.onclick = () => { config.mouse = b.dataset.value; commit(); });
 $('#interval').oninput = e => { config.shortcut.interval = Number(e.target.value); commit({ key: 'interval', list: false }); };
+$('#key-preset').onchange = e => {
+  const item = current(), preset = RECIPES.find(r => r[1] === 'keys' && r[2] === e.target.value);
+  if (!item || !preset) return;
+  item.target = preset[2]; if (item.label === 'Nueva acción') item.label = preset[0];
+  if (item.icon === 'keyboard') item.icon = preset[3];
+  e.target.value = ''; commit();
+};
 
 // Selector de iconos.
 function drawIconGrid() {
@@ -910,12 +1158,16 @@ $('#clear-image').onclick = () => { delete current().image; commit(); };
 // Navegación.
 function showPage(name) {
   page = name;
+  document.body.dataset.workspace = name;
+  previews.forEach(p => p.api?.destroy()); previews = [];
   $$('.page').forEach(p => { p.hidden = p.id !== 'page-' + name; });
   $$('.nav [data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === name));
   $('#crumb').textContent = 'Preferencias  ›  ' + PAGES[name];
   $('#scroll').scrollTop = 0;
   if (name === 'actions') drawStage(true); else drawPreviews(true);
 }
+const PALETTES = { graphite: ['#24262b', '#f3f1ee', '#e0a44f'], lagoon: ['#102c32', '#e0f6f1', '#4cc0bd'], lavender: ['#282238', '#f2eafa', '#b9a0ec'], cream: ['#eee7d9', '#38342e', '#aa683c'] };
+$$('[data-palette]').forEach(button => button.onclick = () => { [config.ringBackground, config.ringForeground, config.ringAccent] = PALETTES[button.dataset.palette]; config.customRingColors = true; commit(); });
 $$('.nav [data-page]').forEach(b => b.onclick = () => showPage(b.dataset.page));
 
 // Datos.
@@ -932,6 +1184,12 @@ $$('[data-window]').forEach(b => b.onclick = () => window.aptic.window(b.dataset
 $('#quit').onclick = async () => { await saveNow(); window.aptic.quit(); };
 document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey, typing = e.target.closest('input:not([type=range]):not([type=checkbox]),textarea');
+  if (page === 'actions' && !document.querySelector('dialog[open]')) {
+    if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); const field = $('#library-card').hidden ? $('#action-search') : $('#library-search'); field.focus(); field.select(); return; }
+    if (e.key === 'Escape' && selectionMode && !typing) { e.preventDefault(); setSelectionMode(false); return; }
+    if (e.key === 'Escape' && e.target === $('#action-search')) { e.preventDefault(); $('#action-search').value = ''; drawList(); return; }
+    if (!typing && mod && e.key.toLowerCase() === 'a' && selectionMode) { e.preventDefault(); $('#batch-all').click(); return; }
+  }
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); }
   if (typing || !mod) return;
   if (e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); travel(history, future); }
@@ -943,6 +1201,7 @@ window.aptic.onState(value => {
   if (value.clipboardResult && value.clipboardResult.at !== previousResult) toast(value.clipboardResult.message);
   if (oldClips !== JSON.stringify(value.clips)) { drawClipboard(); drawList(); drawLibrary(); }
   if (value.profileSwitches !== seenSwitches) {
+    selectionMode = false; checkedActions.clear(); $('#action-search').value = '';
     seenSwitches = value.profileSwitches; clearTimeout(saveTimer);
     config = structuredClone(value.config); saved = JSON.stringify(config); lastSnap = snap();
     if (!locate(selected)) selected = config.items[0].id;

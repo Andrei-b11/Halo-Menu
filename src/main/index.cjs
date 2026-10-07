@@ -55,7 +55,7 @@ function closeOverlay() {
   openingMenu++; releasedWhileOpening = false;
   stopHolding();
   const was = !!pinned; pinned = null;
-  if (overlay && !overlay.isDestroyed()) { overlay.setIgnoreMouseEvents(false); overlay.hide(); }
+  if (overlay && !overlay.isDestroyed()) { overlay.webContents.send('menu-hidden'); overlay.setIgnoreMouseEvents(false); overlay.hide(); }
   if (was) broadcast();
 }
 function placeOverlay(point, extra) {
@@ -119,7 +119,7 @@ const hotkeysOf = c => [
   ...c.profiles.filter(p => p.hotkey).map(p => [p.hotkey, 'profile:' + p.id]),
   ...(c.nextProfileKey ? [[c.nextProfileKey, 'profile:next']] : [])
 ];
-const bindingKey = c => JSON.stringify([c.shortcut, c.mouse, c.modifierTap, hotkeysOf(c)]);
+const bindingKey = c => JSON.stringify([c.shortcut, c.mouse, c.mouseMode, c.modifierTap, hotkeysOf(c)]);
 // Cambiar de perfil: se guarda como cualquier otro cambio y el editor lo adopta.
 async function activateProfile(id, open) {
   if (id === 'next') { const list = config.profiles, i = list.findIndex(p => p.id === config.activeProfile); id = list[(i + 1) % list.length].id; }
@@ -179,7 +179,7 @@ async function prepareBinding(c) {
         if (message.type === 'up') { notifyGesture(message.source, 'soltado'); releaseHold(); }
       });
       child.on('exit', () => { clearTimeout(timer); if (!ready) reject(new Error('El detector nativo no está disponible. Usa una pulsación simple.')); else if (binding === next) { shortcutStatus = 'Detector detenido'; warning = 'El detector de gestos se ha detenido. Vuelve a guardar el atajo o usa una pulsación simple.'; binding = { ...next, child: null }; broadcast(); } });
-      child.postMessage({ keyboard, mouse, modifierTap });
+      child.postMessage({ keyboard, mouse, modifierTap, mouseMode: c.mouseMode, interval: c.shortcut.interval });
     });
   } catch (error) { restore(error); }
   return next;
@@ -197,7 +197,7 @@ function watchCorner() {
     if (d > 60) { armed = true; since = 0; return; }
     if (d > 4 || !armed) { since = 0; return; }
     if (!since) since = Date.now();
-    else if (Date.now() - since > 220) { armed = false; since = 0; if (!overlay.isVisible() || pinned) showOverlay({ source: 'corner' }); }
+    else if (Date.now() - since > config.cornerDelay) { armed = false; since = 0; if (!overlay.isVisible() || pinned) showOverlay({ source: 'corner' }); }
   }, 60);
 }
 const activeStatus = () => testMode ? 'Modo de prueba' : (process.env.XDG_SESSION_TYPE === 'wayland' ? 'Solicitado al portal del escritorio' : 'Activo');

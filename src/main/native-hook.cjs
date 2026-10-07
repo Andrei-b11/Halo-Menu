@@ -35,7 +35,7 @@ process.parentPort.on('message', ({ data }) => {
       // Doble toque: pulsar y soltar la tecla sola dos veces. Cualquier otra tecla por medio
       // (Ctrl + C, por ejemplo) anula la cuenta, así que escribir no lo dispara.
       const own = { Control: ['Ctrl', 'CtrlRight'], Alt: ['Alt', 'AltRight'], Shift: ['Shift', 'ShiftRight'] }[data.modifierTap].map(k => UiohookKey[k]);
-      const tap = new DoubleTap(keyboard?.interval || 350, () => send('trigger', 'modifier'));
+      const tap = new DoubleTap(data.interval || 350, () => send('trigger', 'modifier'));
       const down = new Set();
       hook.on('keydown', e => {
         if (own.includes(e.keycode)) { if (down.size === 0 || down.has(e.keycode)) tap.press(true); else tap.reset(); down.add(e.keycode); }
@@ -47,8 +47,19 @@ process.parentPort.on('message', ({ data }) => {
     const button = BUTTONS[data.mouse];
     if (button) {
       let held = false;
-      hook.on('mousedown', e => { if (e.button === button && !held) { held = true; send('down', 'mouse'); } });
-      hook.on('mouseup', e => { if (e.button === button && held) { held = false; send('up', 'mouse'); } });
+      const tap = new DoubleTap(data.interval || 350, () => send('trigger', 'mouse'));
+      hook.on('mousedown', e => {
+        if (e.button !== button || held) return;
+        held = true;
+        if (data.mouseMode === 'double') tap.press(true);
+        else send(data.mouseMode === 'single' ? 'trigger' : 'down', 'mouse');
+      });
+      hook.on('mouseup', e => {
+        if (e.button !== button || !held) return;
+        held = false;
+        if (data.mouseMode === 'double') tap.release(performance.now());
+        else if (data.mouseMode !== 'single') send('up', 'mouse');
+      });
     }
     hook.start(); send('ready');
   } catch (error) { process.parentPort.postMessage({ type: 'error', message: error.message }); }

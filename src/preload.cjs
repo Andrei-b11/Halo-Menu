@@ -11,5 +11,5 @@ contextBridge.exposeInMainWorld('aptic', {
   pathFor: file => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   export: value => ipcRenderer.invoke('export', value), import: () => ipcRenderer.invoke('import'),
   window: action => ipcRenderer.invoke('window', action), quit: () => ipcRenderer.invoke('quit'),
-  onState: listen('state'), onOpen: listen('open'), onPointer: listen('pointer'), onRelease: listen('release'), onGesture: listen('gesture')
+  onState: listen('state'), onOpen: listen('open'), onPointer: listen('pointer'), onRelease: listen('release'), onGesture: listen('gesture'), onMenuHidden: listen('menu-hidden')
 });

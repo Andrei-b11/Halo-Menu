@@ -114,10 +114,12 @@ const editorVisible = app => app.evaluate(({ BrowserWindow }) => BrowserWindow.g
       src.dispatchEvent(new DragEvent('dragstart', at)); dst.dispatchEvent(new DragEvent('dragover', at)); dst.dispatchEvent(new DragEvent('drop', at)); src.dispatchEvent(new DragEvent('dragend', at)); }, [from, to]);
     await drag('.tile[data-id="pictures"]', '.row[data-id="files"]'); await settled(page);
     assert.ok(disk(profile).items.some(i => i.id === 'pictures')); assert.ok(!disk(profile).library.some(i => i.id === 'pictures'));
+    await page.locator('#library-toggle').click();
     await page.locator('.tile[data-id="lib-music"] .tile-add').click(); await settled(page);
     assert.ok(disk(profile).items.some(i => i.id === 'lib-music'));
     checks.push('Quitar con la ×, arrastrar desde la biblioteca y añadir con +');
     await page.screenshot({ path: path.join(output, '06-biblioteca.png') });
+    await page.locator('#library-close').click();
 
     // Perfiles: uno nuevo copia el actual; cambiar desde fuera (atajo o bandeja) lo adopta el editor.
     await page.locator('#profile-add').click(); await page.locator('#profile-name').fill('Trabajo'); await settled(page);

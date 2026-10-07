@@ -1,5 +1,18 @@
 # HALO MENU 0.2
 
+### Actualización del editor · 7 de octubre de 2026
+
+- **Organizar muchas acciones:** buscador del anillo por nombre, destino o tipo (Ctrl + F), sin distinguir tildes. Los resultados muestran su grupo; al limpiar la búsqueda se recupera el estado plegado. Cada grupo se puede plegar por separado o todos a la vez.
+- **Selección múltiple:** «Seleccionar varias» o Ctrl + clic; marca desde la lista o el círculo. Agrupa acciones del mismo nivel, duplica con identificadores nuevos y sin repetir atajos directos, cambia sus colores o guarda el lote en la biblioteca. Un grupo seleccionado se mueve con su contenido; no se duplica una segunda vez por marcar también un hijo. «Marcar visibles» respeta la búsqueda. Ctrl + A marca las visibles en modo selección y Esc sale. Cada operación es un único paso de deshacer y se cancela entera si excede los límites.
+- **Estudio fijo:** el círculo permanece visible; la lista y el inspector se desplazan por separado, también en una ventana de 1080 × 700.
+- **Arrastrar desde el círculo:** suelta a un lado de otro círculo para insertar antes o después, siguiendo el orden del anillo: aparece una línea en el punto de inserción y un texto con el destino. Funciona también dentro de grupos y con el anillo girado. Suelta en el centro de otra acción para intercambiar sus posiciones; en el centro de un grupo para entrar en él (Mayús para intercambiar con el grupo). Alt + soltar sobre una acción crea un grupo con ambas. Para quitar del anillo, suelta en la biblioteca o en «Soltar aquí para quitar del anillo»; soltar en el fondo no retira acciones. Se mantienen los mínimos de dos acciones por anillo y una por grupo; Ctrl + Z deshace los movimientos.
+- **Biblioteca desplegable:** ábrela desde el botón superior. Busca por nombre o destino, filtra por categoría y usa el doble clic o + para recuperar acciones. «Acciones preparadas» ofrece atajos y carpetas que puedes añadir y personalizar; el inspector de atajos también incluye combinaciones preparadas.
+- **Paleta propia del círculo:** superficie, texto y selección independientes del editor, con cuatro paletas iniciales. Se conservan los colores individuales de cada acción. Los iconos a color mantienen sus tonos originales; el estilo Línea utiliza el color de texto elegido.
+- **Movimiento:** grosor de borde, redondez, curva elástica/suave/lineal, secuencia de apertura y respuesta al apuntar independientes. El apuntado se agrupa por fotograma y la selección no reconstruye el círculo.
+- **Más control:** mantener, un clic o doble clic con el botón del ratón; selección por dirección, precisión sobre el círculo o permanencia con tiempo configurable. La permanencia ejecuta automáticamente tras la espera, salvo al mantener un gesto o en la vista fijada. Rueda opcional para recorrer e Intro para elegir; espera de esquina configurable.
+
+Los ajustes anteriores reciben los nuevos valores por defecto sin cambiar sus acciones, perfiles ni contenido del portapapeles. La aplicación que ya esté abierta necesita reiniciarse para cargar esta actualización.
+
 Un anillo de acciones para el escritorio, con el lenguaje visual de LINDE y el gesto del Actions Ring de Logitech: **mantener, apuntar y soltar**.
 
 ## Abrir en Windows

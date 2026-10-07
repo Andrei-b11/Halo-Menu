@@ -7,6 +7,9 @@ const CHOICES = {
   theme: ['carbon', 'midnight', 'paper', 'light', 'system'],
   style: ['bubbles', 'ring', 'pie', 'glass', 'minimal'],
   shape: ['circle', 'squircle'],
+  mouseMode: ['hold', 'single', 'double'],
+  selectionMode: ['sector', 'precise', 'dwell'],
+  easing: ['spring', 'smooth', 'linear'],
   animation: ['spiral', 'expand', 'bloom', 'cascade', 'pop', 'orbit', 'drop', 'zoom', 'fade', 'none'],
   labels: ['hover', 'always', 'center', 'none'],
   iconStyle: ['linea', 'color'],
@@ -18,9 +21,10 @@ const CHOICES = {
 };
 const RANGES = {
   duration: [0, 800], radius: [60, 220], size: [36, 80], iconScale: [30, 80], opacity: [30, 100],
-  veil: [0, 100], shadow: [0, 100], rotation: [-180, 180], labelSize: [9, 16], hubSize: [28, 96], aimScale: [100, 135]
+  veil: [0, 100], shadow: [0, 100], rotation: [-180, 180], labelSize: [9, 16], hubSize: [28, 96], aimScale: [100, 135],
+  dwellDelay: [350, 1600], cornerDelay: [150, 1200], response: [0, 200], stagger: [0, 100], borderWidth: [0, 4], roundness: [8, 50]
 };
-const SWITCHES = ['nativeIcons', 'closeOnBlur', 'pointer', 'itemBorder'];
+const SWITCHES = ['nativeIcons', 'closeOnBlur', 'pointer', 'itemBorder', 'customRingColors', 'wheelNavigation'];
 const TYPES = ['system', 'folder', 'path', 'url', 'settings', 'keys', 'text', 'group', 'clipboard'];
 const SYSTEM_FOLDERS = ['home', 'downloads', 'desktop', 'documents', 'pictures', 'music', 'videos'];
 // Límites pensados para que el anillo siga siendo cómodo: con más de 16 los sectores son tan
@@ -35,6 +39,9 @@ const SEND_KEYS = new RegExp('^(?:' + MODIFIER + '\\+)*(?:[A-Z0-9]|F(?:[1-9]|1[0
 function defaults() {
   return {
     version: 2, theme: 'carbon', accent: '#ed4c50',
+    mouseMode: 'hold', selectionMode: 'sector', easing: 'spring', wheelNavigation: false,
+    dwellDelay: 750, cornerDelay: 220, response: 70, stagger: 50, borderWidth: 1, roundness: 31,
+    customRingColors: false, ringBackground: '#262626', ringForeground: '#ededed', ringAccent: '#ed4c50',
     style: 'bubbles', shape: 'circle', animation: 'spiral', duration: 320,
     radius: 96, size: 50, iconScale: 46, opacity: 96, veil: 80, shadow: 55, rotation: 0,
     labels: 'hover', labelSize: 11, iconStyle: 'color', hub: 'close', hubSize: 42, aimScale: 112,
@@ -150,6 +157,10 @@ function validateConfig(input, lenient) {
   const c = defaults();
   for (const [key, choices] of Object.entries(CHOICES)) { if (!choices.includes(value[key])) fail('Valor no válido: ' + key); c[key] = value[key]; }
   if (!/^#[\da-f]{6}$/i.test(value.accent)) fail('Color no válido.'); c.accent = value.accent.toLowerCase();
+  for (const key of ['ringBackground', 'ringForeground', 'ringAccent']) {
+    if (!/^#[\da-f]{6}$/i.test(value[key])) fail('Color no válido: ' + key);
+    c[key] = value[key].toLowerCase();
+  }
   for (const [key, [min, max]] of Object.entries(RANGES)) { if (!Number.isFinite(value[key]) || value[key] < min || value[key] > max) fail('Valor fuera de rango: ' + key); c[key] = value[key]; }
   for (const key of SWITCHES) { if (typeof value[key] !== 'boolean') fail('Opción no válida: ' + key); c[key] = value[key]; }
   const s = value.shortcut;

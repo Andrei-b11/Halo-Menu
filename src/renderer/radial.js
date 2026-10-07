@@ -72,6 +72,15 @@ export function mountRadial(host, config, options = {}) {
   set('--opacity', config.opacity + '%'); set('--veil', config.veil + '%'); set('--shadow', (config.shadow / 100).toFixed(2));
   set('--label-size', config.labelSize + 'px'); set('--step', main.step + 'deg'); set('--rot', config.rotation + 'deg');
   set('--aim-scale', (config.aimScale / 100).toFixed(2));
+  set('--response', (config.response ?? 70) + 'ms'); set('--stagger', (config.stagger ?? 50) / 1000);
+  set('--border-width', (config.borderWidth ?? 1) + 'px'); set('--roundness', (config.roundness ?? 31) + '%');
+  set('--dwell', (config.dwellDelay ?? 750) + 'ms');
+  root.dataset.easing = config.easing || 'spring';
+  if (config.customRingColors) {
+    set('--bg', config.ringBackground); set('--panel', config.ringBackground); set('--surface', config.ringBackground);
+    set('--text', config.ringForeground); set('--muted', `color-mix(in srgb,${config.ringForeground} 65%,${config.ringBackground})`);
+    set('--accent', config.ringAccent); set('--line', `color-mix(in srgb,${config.ringForeground} 16%,transparent)`);
+  }
   set('--sub', geometry.sizeAt(size, 1) + 'px'); set('--sub-icon', Math.round(geometry.sizeAt(size, 1) * config.iconScale / 100) + 'px');
   if (options.zoom && options.zoom !== 1) root.style.scale = options.zoom;
   if (options.instant) root.classList.add('no-anim');
@@ -105,6 +114,7 @@ export function mountRadial(host, config, options = {}) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = cls; b.style.setProperty('--i', i); b.dataset.level = level;
     b.setAttribute('role', 'menuitem'); b.setAttribute('aria-label', item.label); b.dataset.id = item.id;
+    if (options.editable) { b.draggable = true; b.title = item.label + ' · Arrastra para mover o guardar en la biblioteca'; }
     if (item.type === 'clipboard') {
       b.title = options.clips?.[item.target]?.preview || 'Espacio vacío · guarda contenido desde el editor';
       const badge = document.createElement('small'); badge.className = 'clip-badge'; badge.textContent = item.target; b.append(badge);
@@ -135,7 +145,7 @@ export function mountRadial(host, config, options = {}) {
   root.setAttribute('role', 'menu'); root.setAttribute('aria-label', 'Acciones rápidas');
   host.append(root);
 
-  let aim = null, moved = false, closed = false, pointerAngle = null;
+  let aim = null, moved = false, closed = false, pointerAngle = null, dwellTimer = null, trackFrame = null, pendingPoint = null;
   let holding = !!options.hold, start = null;
 
   // Cierra los niveles por encima de `keep` (el anillo es el nivel 0).
@@ -143,7 +153,7 @@ export function mountRadial(host, config, options = {}) {
     while (levels.length > keep + 1) { const gone = levels.pop(); gone.el.remove(); }
     const top = levels[keep]; if (top.open !== null) { top.buttons[top.open]?.classList.remove('open'); top.open = null; }
     if (levels.length === 1) root.removeAttribute('data-arc');
-    placeLabel();
+    if (aim && aim.level > keep) setAim(null, false);
   }
   function openGroupAt(level, i) {
     const parent = levels[level];
@@ -189,7 +199,8 @@ export function mountRadial(host, config, options = {}) {
   const itemAt = a => a && levels[a.level] ? levels[a.level].items[a.i] : null;
   function setAim(next, cancel) {
     if (cancel) root.dataset.cancel = ''; else root.removeAttribute('data-cancel');
-    if (JSON.stringify(next || null) === JSON.stringify(aim)) return;
+    if ((!next && !aim) || (next && aim && next.level === aim.level && next.i === aim.i)) return;
+    clearTimeout(dwellTimer); root.querySelector('.dwelling')?.classList.remove('dwelling');
     aim = next || null;
     levels.forEach((lv, l) => lv.buttons.forEach((b, i) => b.classList.toggle('aim', !!aim && aim.level === l && aim.i === i)));
     const item = itemAt(aim);
@@ -205,6 +216,10 @@ export function mountRadial(host, config, options = {}) {
       hubText.textContent = item.label; root.dataset.label = ''; placeLabel();
     } else { root.removeAttribute('data-aiming'); root.removeAttribute('data-label'); hubText.textContent = hint; }
     options.onAim?.(item);
+    if (live && config.selectionMode === 'dwell' && aim && item && item.type !== 'group' && !holding && !options.pinned) {
+      const target = { ...aim }; levels[aim.level].buttons[aim.i].classList.add('dwelling');
+      dwellTimer = setTimeout(() => { if (!closed && aim?.level === target.level && aim?.i === target.i) choose(target.level, target.i); }, config.dwellDelay);
+    }
   }
   const nearestIn = (lv, ang) => { let best = 0, bestD = Infinity; lv.angles.forEach((deg, i) => { const d = apart(ang, norm(deg + 90)); if (d < bestD) { bestD = d; best = i; } }); return best; };
   function locate(x, y) {
@@ -217,6 +232,14 @@ export function mountRadial(host, config, options = {}) {
     if (!start) start = { dx, dy };
     if (Math.hypot(dx - start.dx, dy - start.dy) > DRAG) moved = true;
     if (dist < hubSize / 2) return setAim(null, true);
+    if (config.selectionMode === 'precise') {
+      for (let l = levels.length - 1; l >= 0; l--) {
+        const lv = levels[l];
+        const i = lv.angles.findIndex(deg => Math.hypot(dx - Math.cos(deg * Math.PI / 180) * lv.radius, dy - Math.sin(deg * Math.PI / 180) * lv.radius) <= lv.size * config.aimScale / 200);
+        if (i >= 0) { if (live && lv.items[i].type === 'group') openGroupAt(l, i); return setAim({ level: l, i }, false); }
+      }
+      return setAim(null, false);
+    }
     const top = levels[levels.length - 1];
     if (dist > top.radius + top.size / 2 + REACH_PAD) return setAim(null, false);
     const ang = compass(dx, dy);
@@ -239,6 +262,8 @@ export function mountRadial(host, config, options = {}) {
 
   function choose(level, i) {
     if (closed || !levels[level]) return;
+    pendingPoint = null; cancelAnimationFrame(trackFrame); trackFrame = null;
+    clearTimeout(dwellTimer); root.querySelector('.dwelling')?.classList.remove('dwelling');
     const item = levels[level].items[i];
     if (!item) return;
     if (item.type === 'group') {
@@ -254,6 +279,7 @@ export function mountRadial(host, config, options = {}) {
   // Soltar el gesto: si se apuntó, se elige; si se volvió al centro, se cancela; si ni siquiera
   // se movió, el anillo se queda abierto y funciona a clics.
   function release() {
+    flushTrack();
     if (!holding || closed) return;
     holding = false;
     if (!moved) return;
@@ -270,6 +296,7 @@ export function mountRadial(host, config, options = {}) {
   }
 
   function close() {
+    clearTimeout(dwellTimer); cancelAnimationFrame(trackFrame); pendingPoint = null;
     // Si ya se estaba cerrando y la ventana sigue ahí, se pide esconderla otra vez: nunca se queda atascado.
     if (closed) { if (live) options.onClose?.(); return Promise.resolve(); }
     if (!live) { replay(); options.onClose?.(); return Promise.resolve(); }
@@ -280,6 +307,8 @@ export function mountRadial(host, config, options = {}) {
   }
 
   function replay() {
+    root.classList.remove('settled'); clearTimeout(readyTimer);
+    readyTimer = setTimeout(() => root.classList.add('settled'), entranceTime());
     truncate(0); setAim(null, false);
     root.removeAttribute('data-open'); root.removeAttribute('data-closing'); root.removeAttribute('data-chosen');
     levels[0].buttons.forEach(b => b.classList.remove('chosen'));
@@ -288,9 +317,11 @@ export function mountRadial(host, config, options = {}) {
   }
 
   function move(delta) {
+    pendingPoint = null;
     const level = Number(document.activeElement?.dataset?.level ?? levels.length - 1);
     const list = (levels[level] || levels[0]).buttons;
-    list[(list.indexOf(document.activeElement) + delta + list.length) % list.length].focus({ preventScroll: true });
+    const focused = list.indexOf(document.activeElement), index = focused < 0 ? (aim?.level === level ? aim.i : delta > 0 ? -1 : 0) : focused;
+    list[(index + delta + list.length) % list.length].focus({ preventScroll: true });
   }
   function key(e) {
     if (closed) return false;
@@ -315,6 +346,19 @@ export function mountRadial(host, config, options = {}) {
     if (!aim) { if (live && !options.pinned) close(); return; }
     choose(aim.level, aim.i);
   }
+  // Both the native cursor stream and DOM events share one update per frame.
+  function flushTrack() {
+    if (!pendingPoint) return;
+    const point = pendingPoint; pendingPoint = null; track(point.x, point.y);
+  }
+  function queueTrack(x, y) {
+    pendingPoint = { x, y };
+    if (trackFrame !== null) return;
+    trackFrame = requestAnimationFrame(() => { trackFrame = null; flushTrack(); });
+  }
+  const entranceTime = () => config.duration * (1.2 + config.items.length * (config.stagger ?? 50) / 1000 * (config.animation === 'cascade' ? 3.2 : 1.2));
+  let readyTimer = setTimeout(() => root.classList.add('settled'), options.instant ? 0 : entranceTime());
+  function destroy() { closed = true; clearTimeout(dwellTimer); clearTimeout(readyTimer); cancelAnimationFrame(trackFrame); pendingPoint = null; }
 
   if (options.instant) { root.dataset.open = ''; placeLabel(); requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('no-anim'))); }
   else requestAnimationFrame(() => requestAnimationFrame(() => { root.dataset.open = ''; placeLabel(); }));
@@ -333,10 +377,10 @@ export function mountRadial(host, config, options = {}) {
     }
   }
   return {
-    root, track, release, close, replay, key, backgroundClick, place, mark, reveal,
+    root, track, queueTrack, release, close, replay, key, backgroundClick, place, mark, reveal, destroy, move,
     get buttons() { return levels[0].buttons; },
     get aimedItem() { return aim ? levels[aim.level]?.items[aim.i] : null; },
-    clearAim: () => setAim(null, false),
+    clearAim: () => { pendingPoint = null; setAim(null, false); },
     aimAt: i => { if (!closed && config.items[i]) setAim({ level: 0, i }, false); },
     openGroup: id => reveal(id),
     get depth() { return levels.length - 1; }
