@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('aptic', {
   run: id => ipcRenderer.invoke('run', id), showMenu: () => ipcRenderer.invoke('show-menu'),
   hideMenu: () => ipcRenderer.invoke('hide-menu'), openEditor: () => ipcRenderer.invoke('open-editor'),
   pick: kind => ipcRenderer.invoke('pick', kind), pickImage: () => ipcRenderer.invoke('pick-image'), apps: () => ipcRenderer.invoke('apps'),
-  pinMenu: on => ipcRenderer.invoke('pin-menu', on), profile: id => ipcRenderer.invoke('profile', id), overlayHover: over => ipcRenderer.invoke('overlay-hover', over),
+  pinMenu: on => ipcRenderer.invoke('pin-menu', on), profile: id => ipcRenderer.invoke('profile', id), overlayHover: over => ipcRenderer.invoke('overlay-hover', over), overlayBlank: () => ipcRenderer.invoke('overlay-blank'),
   pathFor: file => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   export: value => ipcRenderer.invoke('export', value), import: () => ipcRenderer.invoke('import'),
   window: action => ipcRenderer.invoke('window', action), quit: () => ipcRenderer.invoke('quit'),

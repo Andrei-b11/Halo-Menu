@@ -126,7 +126,8 @@ function travel(from, to) {
   selectionMode = false; checkedActions.clear();
   to.push(snap()); config = JSON.parse(from.pop()); lastSnap = snap(); lastKey = null;
   if (!locate(selected)) selected = config.items[0].id;
-  renderAll(true); scheduleSave(120); updateHistoryButtons();
+  // Deshacer no repite la entrada: cada acción vuelve a su sitio desde donde estaba.
+  withFlip(() => renderAll(false)); scheduleSave(120); updateHistoryButtons();
 }
 function commit({ key = null, replay = false, list = true } = {}) {
   record(key);
@@ -181,10 +182,15 @@ let dragId = null;
 function drawList() {
   if (dragId) return;
   const host = $('#actions'), scrollTop = host.scrollTop; host.replaceChildren();
-  const query = normalizeText($('#action-search').value.trim());
-  const matches = item => normalizeText(item.label + ' ' + summary(item) + ' ' + TYPE_NAME[item.type]).includes(query);
+  const words = normalizeText($('#action-search').value.trim()), filter = $('#action-filter').value;
+  // Buscar y filtrar por tipo se combinan; un grupo se ve si algo de dentro coincide.
+  const query = words || (filter !== 'all' ? ' ' : '');
+  const kind = item => filter === 'all' || (filter === 'hidden' ? item.hidden : filter === 'system' ? item.type === 'system' || item.type === 'folder' : item.type === filter);
+  const matches = item => kind(item) && normalizeText(item.label + ' ' + summary(item) + ' ' + TYPE_NAME[item.type] + ' ' + (item.note || '')).includes(words);
   const subtreeMatches = item => matches(item) || (item.items || []).some(subtreeMatches);
   $('#count').textContent = config.items.length + '/' + MAX_ITEMS;
+  $('#count-fill').style.width = config.items.length / MAX_ITEMS * 100 + '%';
+  $('#action-filter').classList.toggle('on', filter !== 'all');
   const issues = new Set((state?.issues || []).map(i => i.id));
   let count = 0;
   const add = (items, parent, level, inherited = false) => items.forEach((item, i) => {
@@ -195,7 +201,7 @@ function drawList() {
   });
   add(config.items, null, 0);
   if (!count) { const empty = document.createElement('p'); empty.className = 'list-empty'; empty.textContent = 'No hay coincidencias. Prueba otro nombre, destino o tipo de acción.'; host.append(empty); }
-  $('#search-count').textContent = query ? count + ' visibles' : '';
+  $('#search-count').textContent = query ? count + (count === 1 ? ' visible' : ' visibles') : '';
   const groups = allGroups(), allFolded = groups.length > 0 && groups.every(g => foldedGroups.has(g.item.id));
   $('#fold-groups').title = $('#fold-groups').ariaLabel = allFolded ? 'Desplegar todos los grupos' : 'Plegar todos los grupos';
   $('#fold-groups').disabled = !groups.length || !!query;
@@ -213,18 +219,19 @@ function drawList() {
 function row(item, index, parent, level, unfinished) {
   const b = document.createElement('button');
   const active = selectionMode ? checkedActions.has(item.id) : item.id === selected;
-  b.className = 'row' + (active ? ' selected' : '') + (unfinished ? ' unfinished' : '');
+  b.className = 'row' + (active ? ' selected' : '') + (unfinished ? ' unfinished' : '') + (item.hidden ? ' is-hidden' : '') + (item.type === 'group' ? ' group' : '');
   b.style.setProperty('--level', level);
   if (level) b.classList.add('child');
-  b.dataset.id = item.id; b.draggable = !selectionMode; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(active));
+  b.dataset.id = item.id; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', String(active));
   const grip = document.createElement('span'); grip.className = 'row-grip'; grip.innerHTML = icon('grip');
   const glyph = document.createElement('span'); glyph.className = 'row-glyph';
   if (item.color) { glyph.dataset.tint = ''; glyph.style.setProperty('--tint', item.color); }
   paintGlyph(glyph, item, config);
   const copy = document.createElement('span'); copy.className = 'row-copy';
   const name = document.createElement('span'); name.className = 'row-name'; name.textContent = item.label;
-  const small = document.createElement('small'); small.textContent = unfinished ? 'Sin terminar · ' + summary(item) : summary(item);
+  const small = document.createElement('small'); small.textContent = unfinished ? 'Sin terminar · ' + summary(item) : item.note || summary(item);
   copy.append(name, small);
+  if (item.hidden) { const eye = document.createElement('span'); eye.className = 'row-flag'; eye.innerHTML = icon('eye-off'); eye.title = 'Oculta en el anillo'; name.prepend(eye); }
   const end = document.createElement('span');
   if (item.hotkey) { end.className = 'row-hotkey'; end.textContent = prettyKeys(item.hotkey, '+'); end.title = 'Atajo directo'; }
   else if (item.type === 'group') { end.className = 'group-count'; end.textContent = item.items.length; }
@@ -242,18 +249,8 @@ function row(item, index, parent, level, unfinished) {
   if (selectionMode) { const check = document.createElement('span'); check.className = 'row-check'; check.textContent = active ? '✓' : ''; check.setAttribute('aria-hidden', 'true'); b.append(check); }
   b.append(grip, glyph, copy, end, remove); remove.hidden = selectionMode;
   b.onclick = e => { if (selectionMode || e.ctrlKey || e.metaKey) { selectionMode = true; toggleChecked(item.id); } else select(item.id); };
-  b.ondragstart = e => beginDrag(e, item.id);
-  b.ondragend = endDrag;
-  b.ondragover = e => {
-    if (!dragId || dragId === item.id) return;
-    e.preventDefault();
-    const rect = b.getBoundingClientRect(), y = (e.clientY - rect.top) / rect.height;
-    const where = item.type === 'group' && y > .3 && y < .7 ? 'into' : y < .5 ? 'before' : 'after';
-    $$('.row').forEach(r => r.classList.remove('drop-before', 'drop-after', 'drop-into'));
-    b.classList.add('drop-' + where); b.dataset.drop = where;
-  };
-  b.ondragleave = () => b.classList.remove('drop-before', 'drop-after', 'drop-into');
-  b.ondrop = e => { e.preventDefault(); e.stopPropagation(); const id = dragId; endDrag(); if (id) moveItem(id, item.id, b.dataset.drop || 'before'); };
+  // Doble clic: cambiar el nombre sin buscar el campo.
+  b.ondblclick = e => { if (selectionMode || e.target.closest('.row-remove,.group-fold')) return; select(item.id); $('#action-name').focus(); $('#action-name').select(); };
   return b;
 }
 
@@ -273,7 +270,6 @@ function drawBatch() {
   for (const id of ['batch-duplicate', 'batch-library', 'batch-apply-color', 'batch-reset-color']) $('#' + id).disabled = !nodes.length;
   $('#batch-group').disabled = nodes.length < 2;
   $$('#stage .ring-opt,#stage .ring-sub').forEach(button => {
-    button.draggable = !selectionMode;
     button.classList.toggle('batch-checked', selectionMode && checkedActions.has(button.dataset.id));
     button.classList.toggle('selected-item', !selectionMode && button.dataset.id === selected);
   });
@@ -313,20 +309,18 @@ for (const operation of ['group', 'duplicate', 'library']) $('#batch-' + operati
 $('#batch-apply-color').onclick = () => organizeSelection('color', $('#batch-color').value);
 $('#batch-reset-color').onclick = () => organizeSelection('color', '');
 $('#action-search').oninput = () => { $('#actions').scrollTop = 0; drawList(); };
+$('#action-filter').onchange = () => { $('#actions').scrollTop = 0; drawList(); };
 $('#fold-groups').onclick = () => {
   const groups = allGroups(), expand = groups.every(g => foldedGroups.has(g.item.id));
   groups.forEach(g => expand ? foldedGroups.delete(g.item.id) : foldedGroups.add(g.item.id)); drawList();
 };
-// Zonas donde soltar: el final del anillo (lista o vista previa) y la biblioteca.
+// Lo que llega de fuera (archivos y carpetas del Explorador) usa el arrastre del sistema;
+// las acciones se mueven con el arrastre propio de más abajo.
 const outside = e => !dragId && [...(e.dataTransfer?.types || [])].includes('Files');
-function dropZone(el, onDrop, listFor) {
-  el.addEventListener('dragover', e => { if (!dragId && !outside(e)) return; e.preventDefault(); el.classList.add('drop-zone'); });
+function dropZone(el, listFor) {
+  el.addEventListener('dragover', e => { if (!outside(e)) return; e.preventDefault(); el.classList.add('drop-zone'); });
   el.addEventListener('dragleave', e => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop-zone'); });
-  el.addEventListener('drop', e => {
-    el.classList.remove('drop-zone');
-    if (outside(e)) { e.preventDefault(); return dropFiles(e, listFor()); }
-    if (!dragId) return; e.preventDefault(); e.stopPropagation(); const id = dragId; endDrag(); onDrop(id);
-  });
+  el.addEventListener('drop', e => { el.classList.remove('drop-zone'); if (outside(e)) { e.preventDefault(); dropFiles(e, listFor()); } });
 }
 // Carpetas, programas y archivos arrastrados desde el Explorador se convierten en acciones.
 function dropFiles(e, list) {
@@ -454,7 +448,22 @@ function drawInspector() {
   $('#place-field').hidden = false;
   place.replaceChildren(new Option('Anillo principal', ''), ...groups.map(g => { const o = new Option('  '.repeat(g.level) + g.path.join(' › '), g.item.id); o.disabled = !!canPlace(item, g.item, g.level); return o; }), new Option('Biblioteca (fuera del anillo)', '__library'));
   place.value = loc.library && !parent ? '__library' : parent && !loc.library ? parent.id : loc.library ? '__library' : '';
-  $('#move-up').disabled = index === 0; $('#move-down').disabled = index === list.length - 1;
+  $('#move-up').disabled = $('#move-first').disabled = index === 0; $('#move-down').disabled = $('#move-last').disabled = index === list.length - 1;
+  $('#order-pos').textContent = (index + 1) + ' / ' + list.length;
+  setValue($('#action-note'), item.note || '');
+  $('#action-visible').checked = !item.hidden; $('#action-visible').disabled = loc.library;
+  const eye = $('#toggle-visible'); eye.setAttribute('aria-pressed', String(!item.hidden)); eye.disabled = loc.library;
+  eye.querySelector('[data-icon]').innerHTML = icon(item.hidden ? 'eye-off' : 'eye'); eye.title = item.hidden ? 'Oculta en el anillo · pulsa para mostrarla' : 'Visible en el anillo · pulsa para ocultarla';
+  $('#insp-kind').firstChild.textContent = (loc.library ? 'Biblioteca ' : t === 'group' ? 'Grupo ' : 'Acción ');
+  $('#insp-pos').textContent = (index + 1) + '/' + list.length;
+  const runnable = ['system', 'folder', 'path', 'url'].includes(t) && !incomplete(item);
+  $('#run-action').disabled = !runnable;
+  $('#run-action').title = runnable ? 'Ejecutar ahora, sin abrir el anillo' : t === 'group' ? 'Un grupo se abre en el anillo' : incomplete(item) ? 'Completa la acción para probarla' : 'Este tipo se prueba desde el anillo, con la aplicación de destino delante';
+  $('#quick-duplicate').disabled = list.length >= capacity(parent, list); $('#quick-remove').disabled = list.length <= minimum(parent, list);
+  $('#reset-icon').hidden = !item.image && item.icon === DEFAULT_ICON[t];
+  const others = config.profiles.filter(p => p.id !== config.activeProfile);
+  $('#profile-copy-field').hidden = !others.length;
+  $('#copy-to-profile').replaceChildren(new Option('Elige un perfil…', ''), ...others.map(p => { const o = new Option(p.name + ' · ' + p.items.length + '/' + MAX_ITEMS, p.id); o.disabled = p.items.length >= MAX_ITEMS; return o; }));
   $('#remove').disabled = list.length <= minimum(parent, list);
   $('#remove').title = $('#remove').disabled ? lowMessage(parent) : loc.library ? 'Eliminar de la biblioteca' : 'Eliminar';
   $('#duplicate').disabled = list.length >= capacity(parent, list);
@@ -478,11 +487,11 @@ function drawSwatches(host, value, onPick, allowNone) {
 }
 
 // --- Vistas previas -------------------------------------------------------------------
-function previewMount(host, { replay = false, onSelect, hint, extra = 0 } = {}) {
+function previewMount(host, { replay = false, onSelect, hint, extra = 0, maxZoom = 1 } = {}) {
   const w = host.clientWidth, h = host.clientHeight;
   if (!w || !h) return null;
   const reach = geometry.reach(config) + (config.labels === 'always' ? 26 : 0);
-  const zoom = Math.max(.3, Math.min(1, (w - 30) / (2 * reach), (h - 70 - extra) / (2 * reach + 40)));
+  const zoom = Math.max(.3, Math.min(maxZoom, (w - 30) / (2 * reach), (h - 70 - extra) / (2 * reach + 40)));
   return mountRadial(host, config, { mode: 'preview', editable: host.id === 'stage', clips: state.clips, anchor: { x: w / 2, y: h / 2 - 16 }, zoom, instant: !replay, hint, onSelect, onClose: () => {} });
 }
 // --- Biblioteca -------------------------------------------------------------------------
@@ -498,7 +507,7 @@ function drawLibrary() {
   const items = source.filter(item => (category === 'all' || item.type === category || category === 'system' && item.type === 'folder') && (item.label + ' ' + summary(item)).toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(query));
   if (!items.length) { host.innerHTML = '<p class="library-empty">' + (query || category !== 'all' ? 'No hay coincidencias. Prueba otra búsqueda o categoría.' : 'Tu biblioteca está vacía. Arrastra aquí una acción o explora las acciones preparadas.') + '</p>'; return; }
   items.forEach(item => {
-    const b = document.createElement('button'); b.className = 'tile' + (item.id === selected ? ' selected' : '') + (incomplete(item) ? ' unfinished' : ''); b.draggable = true; b.dataset.id = item.id;
+    const b = document.createElement('button'); b.className = 'tile' + (item.id === selected ? ' selected' : '') + (incomplete(item) ? ' unfinished' : ''); b.dataset.id = item.id;
     b.title = item.label + ' · ' + summary(item) + '\nArrastra al anillo o haz doble clic para añadirla.';
     const glyph = document.createElement('span'); glyph.className = 'row-glyph';
     if (item.color) { glyph.dataset.tint = ''; glyph.style.setProperty('--tint', item.color); }
@@ -512,10 +521,8 @@ function drawLibrary() {
     b.append(glyph, name, add, del);
     b.onclick = () => select(item.id);
     b.ondblclick = () => toRing(item.id);
-    b.ondragstart = e => beginDrag(e, item.id);
-    b.ondragend = endDrag;
     if (libraryCatalog) {
-      b.draggable = false; del.remove();
+      del.remove();
       b.title = 'Añadir «' + item.label + '» al anillo';
       const addRecipe = () => { if (config.items.length >= MAX_ITEMS) return toast(fullMessage(null, config.items)); const copy = { ...item, id: newId() }; config.items.push(copy); selected = copy.id; commit(); toast('«' + copy.label + '» añadida. Puedes personalizarla en el inspector.'); };
       b.onclick = addRecipe; b.ondblclick = null; add.onclick = e => { e.stopPropagation(); addRecipe(); };
@@ -523,23 +530,10 @@ function drawLibrary() {
     host.append(b);
   });
 }
-dropZone($('#library-card'), id => { const loc = locate(id); if (loc && !loc.library) toLibrary(id); else if (loc) moveTo(id, config.library, config.library.length); }, () => config.library);
-dropZone($('#actions'), id => toRing(id), () => config.items);
-// Empty preview space is never an implicit removal target.
-dropZone($('#stage'), id => { if (locate(id)?.library) toRing(id); }, () => config.items);
-dropZone($('#ring-store'), toLibrary, () => config.library);
-function beginDrag(e, id) {
-  dragId = id; document.body.dataset.dragging = '';
-  stage?.clearAim();
-  e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
-}
-function endDrag() {
-  dragId = null; delete document.body.dataset.dragging;
-  $('#stage').removeAttribute('data-drop-hint');
-  $('#stage .insert-marker')?.remove();
-  $$('.dragging,.drop-zone,.drop-target,.drop-before,.drop-after,.drop-into').forEach(el => el.classList.remove('dragging', 'drop-zone', 'drop-target', 'drop-before', 'drop-after', 'drop-into'));
-}
-document.addEventListener('dragend', endDrag);
+dropZone($('#library-card'), () => config.library);
+dropZone($('#actions'), () => config.items);
+dropZone($('#stage'), () => config.items);
+dropZone($('#ring-store'), () => config.library);
 function toggleLibrary(open) {
   $('#library-card').hidden = !open; $('#library-toggle').setAttribute('aria-expanded', String(open));
   if (open) { drawLibrary(); $('#library-search').focus({ preventScroll: true }); }
@@ -610,39 +604,12 @@ function drawStage(replay = false) {
   $('#library-card').style.top = $('.studio').offsetTop + 'px';
   $('#library-card').style.width = Math.min(390, Math.max(320, $('.list-card').clientWidth + 40)) + 'px';
   stage?.destroy();
-  stage = previewMount($('#stage'), { replay, hint: 'Elige', onSelect: item => selectionMode ? toggleChecked(item.id) : select(item.id) });
+  stage = previewMount($('#stage'), { replay, hint: 'Elige', maxZoom: 1.15, onSelect: item => selectionMode ? toggleChecked(item.id) : select(item.id) });
   if (!stage) return;
-  stage.reveal(selected); stage.mark(selected);
+  stage.reveal(selected, { instant: true }); stage.mark(selected);
   drawBatch();
 }
 $('#stage').addEventListener('pointermove', e => { if (!dragId) stage?.queueTrack(e.clientX, e.clientY); });
-$('#stage').addEventListener('dragstart', e => { const button = e.target.closest('[data-id]'); if (button) beginDrag(e, button.dataset.id); });
-// Chromium can report the stage as the event target at the edge of a scaled
-// circle. Resolve the visible buttons by screen coordinates, with a small halo.
-function circleDropTarget(e) {
-  let closest = null, distance = Infinity;
-  for (const button of $$('#stage .ring-opt,#stage .ring-sub')) {
-    const r = button.getBoundingClientRect();
-    const x = r.left + r.width / 2, y = r.top + r.height / 2, size = Math.max(r.width, r.height);
-    const angle = parseFloat(button.style.getPropertyValue('--a')) * Math.PI / 180;
-    const dx = e.clientX - x, dy = e.clientY - y, d = Math.hypot(dx, dy);
-    // Clockwise is "after" throughout the ring, including its left and bottom
-    // sides. Use the same tangent for submenus and rotated configurations.
-    const along = -Math.sin(angle) * dx + Math.cos(angle) * dy;
-    const across = Math.cos(angle) * dx + Math.sin(angle) * dy;
-    const side = Math.abs(along) > size * .32 && Math.abs(across) <= size / 2 + 10;
-    if (d > size / 2 + (side ? 26 : 12) || d >= distance) continue;
-    const where = side ? (along < 0 ? 'before' : 'after') : 'center';
-    const offset = (where === 'before' ? -1 : 1) * (size / 2 + 7);
-    closest = { button, where, x: x - Math.sin(angle) * offset, y: y + Math.cos(angle) * offset, angle };
-    distance = d;
-  }
-  return closest;
-}
-function clearCircleDrop() {
-  $$('#stage .drop-target').forEach(el => el.classList.remove('drop-target'));
-  $('#stage .insert-marker')?.remove(); $('#stage').removeAttribute('data-drop-hint');
-}
 function swapItems(id, targetId) {
   const from = locate(id), to = locate(targetId);
   if (!from || !to || id === targetId) return;
@@ -661,34 +628,333 @@ function groupItems(id, targetId) {
   to.list[to.index] = group; from.list.splice(from.index, 1);
   selected = group.id; commit(); toast('Grupo creado con las dos acciones. Puedes cambiar su nombre.');
 }
-$('#stage').addEventListener('dragover', e => {
-  if (!dragId) return;
-  e.preventDefault(); e.stopPropagation();
-  const hit = circleDropTarget(e), target = hit && locate(hit.button.dataset.id)?.item;
-  clearCircleDrop();
-  $('#stage').classList.remove('drop-zone');
-  if (!target || target.id === dragId) return;
-  e.dataTransfer.dropEffect = 'move';
-  if (hit.where !== 'center') {
-    const marker = document.createElement('span'), rect = $('#stage').getBoundingClientRect();
-    marker.className = 'insert-marker'; marker.style.left = hit.x - rect.left + 'px'; marker.style.top = hit.y - rect.top + 'px'; marker.style.rotate = hit.angle + 'rad';
-    $('#stage').append(marker);
-    $('#stage').dataset.dropHint = (hit.where === 'before' ? 'Colocar antes de «' : 'Colocar después de «') + target.label + '»';
-  } else {
-    hit.button.classList.add('drop-target');
-    $('#stage').dataset.dropHint = target.type === 'group' && !e.shiftKey ? 'Añadir a «' + target.label + '»' : e.altKey ? 'Crear un grupo con ambas acciones' : 'Intercambiar con «' + target.label + '»';
+// --- Arrastrar ---------------------------------------------------------------------------
+// Como en el tablero de LINDE, las acciones se arrastran con el puntero y no con el arrastre
+// del sistema: lo que se levanta es una copia que sigue al cursor, más grande y con sombra.
+// En la lista se abre un hueco donde caerá y las filas se apartan; en el círculo, los dos
+// vecinos se separan y aparece el sitio, o se ilumina el círculo con el que se intercambia.
+// Al soltar, la copia vuela a su sitio y todo lo demás viaja desde donde se veía.
+const DRAG_START = 5, EASE = 'cubic-bezier(.22,1,.36,1)';
+const motionOn = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+const rowOf = id => $(`#actions .row[data-id="${CSS.escape(id)}"]`);
+const descendants = item => (item.items || []).flatMap(kid => [kid.id, ...descendants(kid)]);
+let press = null, drag = null, swallowClick = false, settling = 0;
+const slot = document.createElement('div'); slot.className = 'row-slot'; slot.setAttribute('aria-hidden', 'true');
+// Dónde está un elemento sin contar la animación que lo esté llevando: así el hueco se
+// decide con el sitio real y no con uno a medio camino, que haría temblar la lista.
+function rest(el) {
+  const r = el.getBoundingClientRect(), t = getComputedStyle(el).transform;
+  if (!t || t === 'none') return r;
+  const m = new DOMMatrixReadOnly(t);
+  return { left: r.left - m.m41, right: r.right - m.m41, top: r.top - m.m42, bottom: r.bottom - m.m42, width: r.width, height: r.height };
+}
+// Cambia el sitio de las cosas y lleva cada una desde donde se veía hasta donde queda.
+function flip(targets, mutate) {
+  if (!motionOn()) return mutate();
+  const seen = targets.filter(Boolean).map(el => [el, el.getBoundingClientRect()]);
+  mutate();
+  for (const [el, was] of seen) {
+    if (!el.isConnected) continue;
+    el.getAnimations().forEach(a => a.cancel());
+    const now = el.getBoundingClientRect(), dx = was.left - now.left, dy = was.top - now.top;
+    if (Math.abs(dx) < .5 && Math.abs(dy) < .5) continue;
+    el.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], { duration: 210, easing: EASE });
   }
+}
+const listRows = () => $$('#actions .row');
+
+function arm(e, source) {
+  if (e.button !== 0 || selectionMode || drag || Date.now() < settling) return;
+  if (e.target.closest('.row-remove,.group-fold,.tile-add,.tile-remove,input,select,textarea')) return;
+  const el = e.target.closest(source === 'stage' ? '.ring-opt,.ring-sub' : source === 'list' ? '.row' : '.tile');
+  if (!el?.dataset.id || (source === 'library' && libraryCatalog) || el.closest('.retiring') || !locate(el.dataset.id)) return;
+  press = { x: e.clientX, y: e.clientY, id: el.dataset.id, source, el, pointer: e.pointerId };
+}
+$('#actions').addEventListener('pointerdown', e => arm(e, 'list'));
+$('#library').addEventListener('pointerdown', e => arm(e, 'library'));
+$('#stage').addEventListener('pointerdown', e => arm(e, 'stage'));
+
+// La copia que viaja con el cursor: una fila levantada sobre la lista y un círculo sobre el
+// anillo. Cambia de forma al pasar de una zona a otra, sin saltos.
+function makeGhost(item, box, source) {
+  const ghost = document.createElement('div'); ghost.className = 'drag-ghost'; ghost.setAttribute('aria-hidden', 'true');
+  const glyph = document.createElement('span'); glyph.className = 'drag-glyph';
+  if (item.color) { glyph.dataset.tint = ''; ghost.style.setProperty('--tint', item.color); }
+  paintGlyph(glyph, item, config);
+  const name = document.createElement('span'); name.className = 'drag-name'; name.textContent = item.label;
+  const detail = document.createElement('small'); detail.textContent = summary(item); name.append(detail);
+  const tip = document.createElement('span'); tip.className = 'drag-tip';
+  ghost.append(glyph, name, tip);
+  const circle = Math.round(config.size * (stage?.zoom || 1));
+  ghost.style.setProperty('--circle', circle + 'px');
+  ghost.style.setProperty('--row-w', Math.round(source === 'stage' ? Math.min(260, Math.max(200, $('#actions').clientWidth - 16)) : box.width) + 'px');
+  document.body.append(ghost);
+  return { ghost, tip, circle };
+}
+function shapeGhost(shape) {
+  if (drag.shape === shape) return;
+  drag.shape = shape; drag.ghost.dataset.shape = shape;
+  // Se sostiene por el mismo punto por el que se cogió: nada se desliza bajo el cursor. Solo
+  // al cambiar de forma (fila ⇄ círculo) se conserva la proporción de ese punto.
+  const fit = (v, max) => Math.max(6, Math.min(max - 6, v));
+  if (drag.source === 'stage') drag.aim = shape === 'circle' ? { ...drag.hold } : { x: 21, y: 21 };
+  else drag.aim = shape === 'circle' ? { x: fit(drag.grab.x / drag.origin.width * drag.circle, drag.circle), y: fit(drag.grab.y / drag.origin.height * drag.circle, drag.circle) } : { ...drag.grab };
+}
+function beginDrag() {
+  const { el, source, id } = press, loc = locate(id);
+  if (!loc) { press = null; return; }
+  const box = el.getBoundingClientRect(), item = loc.item;
+  const { ghost, tip, circle } = makeGhost(item, box, source);
+  drag = { id, item, source, el, ghost, tip, circle, origin: box, point: { x: press.x, y: press.y }, grab: { x: press.x - box.left, y: press.y - box.top }, pointer: press.pointer, target: null, key: null, frame: 0, shape: null };
+  // Empieza exactamente donde estaba lo que se coge, y desde ahí se levanta.
+  drag.hold = { x: press.x - box.left - (box.width - circle) / 2, y: press.y - box.top - (box.height - circle) / 2 };
+  shapeGhost(source === 'stage' ? 'circle' : 'row');
+  drag.at = { ...drag.aim };
+  drag.ghost.style.transform = `translate(${press.x - drag.at.x}px,${press.y - drag.at.y}px)`;
+  dragId = id; document.body.dataset.dragging = source;
+  try { $('#page-actions').setPointerCapture(press.pointer); } catch { /* sin captura, sigue funcionando dentro de la ventana */ }
+  stage?.clearAim(); getSelection()?.removeAllRanges();
+  const hidden = new Set([id, ...descendants(item)]);
+  if (source === 'list') {
+    slot.className = 'row-slot'; slot.style.height = box.height + 'px'; slot.style.setProperty('--level', el.style.getPropertyValue('--level') || 0);
+    flip(listRows(), () => { el.before(slot); listRows().forEach(r => { if (hidden.has(r.dataset.id)) r.classList.add('is-dragging'); }); });
+    drag.home = { anchor: el, side: 'before', level: el.style.getPropertyValue('--level') || 0 };
+  } else {
+    listRows().forEach(r => { if (hidden.has(r.dataset.id)) r.classList.add('drag-origin'); });
+    if (source === 'library') el.classList.add('dragging');
+  }
+  stage?.lift(id);
+  requestAnimationFrame(() => ghost.classList.add('is-lifted'));
+  drag.frame = requestAnimationFrame(tick);
+}
+document.addEventListener('pointermove', e => {
+  if (!press || e.pointerId !== press.pointer) return;
+  if (!drag) { if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return; beginDrag(); if (!drag) return; }
+  drag.point = { x: e.clientX, y: e.clientY }; drag.alt = e.altKey; drag.shift = e.shiftKey;
+});
+// Cada fotograma: la copia sigue al cursor, se decide el destino y, cerca de un borde de la
+// lista, esta se desplaza sola (más deprisa cuanto más cerca).
+function tick() {
+  if (!drag) return;
+  const { x, y } = drag.point;
+  drag.at.x += (drag.aim.x - drag.at.x) * .35; drag.at.y += (drag.aim.y - drag.at.y) * .35;
+  drag.ghost.style.transform = `translate(${x - drag.at.x}px,${y - drag.at.y}px)`;
+  const list = $('#actions'), r = list.getBoundingClientRect(), edge = 36;
+  if (x >= r.left && x <= r.right && y >= r.top - 20 && y <= r.bottom + 20) {
+    const speed = gap => Math.round(3 + 13 * Math.min(1, Math.max(0, (edge - gap) / edge)));
+    const dy = y < r.top + edge ? -speed(y - r.top) : y > r.bottom - edge ? speed(r.bottom - y) : 0;
+    if (dy) list.scrollTop += dy;
+  }
+  hover();
+  drag.frame = requestAnimationFrame(tick);
+}
+const inside = (el, x, y) => { if (!el || el.hidden || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+function hover() {
+  const { x, y } = drag.point;
+  let t = null;
+  if (inside($('#library-card'), x, y)) t = { zone: 'library', op: 'library', hint: 'Guardar en la biblioteca' };
+  else if (inside($('#ring-store'), x, y)) t = { zone: 'store', op: 'library', hint: 'Quitar del anillo · queda en la biblioteca' };
+  else if (inside($('#actions'), x, y)) t = listTarget(x, y);
+  else if (inside($('#stage'), x, y)) t = stageTarget(x, y);
+  show(t);
+}
+
+// Sobre la lista: antes o después de la fila bajo el cursor, o dentro de un grupo si se
+// suelta en su mitad. Debajo de un grupo desplegado se cae en su primer hueco.
+function listTarget(x, y) {
+  const rows = listRows().filter(r => !r.classList.contains('is-dragging'));
+  if (!rows.length) return null;
+  const last = rows.at(-1), lastTop = config.items.at(-1);
+  if (y > rest(last).bottom + 6 && lastTop) return { zone: 'list', op: 'move', targetId: lastTop.id, where: 'after', visual: { side: 'end', level: 0 }, hint: 'Al final del anillo' };
+  const row = rows.find(r => y < rest(r).bottom) || last, b = rest(row), rel = (y - b.top) / b.height;
+  const loc = locate(row.dataset.id); if (!loc) return null;
+  const item = loc.item, level = Number(row.style.getPropertyValue('--level') || 0);
+  const where = item.type === 'group' && rel > .28 && rel < .72 ? 'into' : rel < .5 ? 'before' : 'after';
+  if (where === 'into') return { zone: 'list', op: 'move', targetId: item.id, where, hint: 'Dentro de «' + item.label + '»' };
+  const open = item.type === 'group' && item.items.length && rowOf(item.items[0].id);
+  if (where === 'after' && open) return { zone: 'list', op: 'move', targetId: item.items[0].id, where: 'before', visual: { anchor: row, side: 'after', level: level + 1 }, hint: 'Al principio de «' + item.label + '»' };
+  return { zone: 'list', op: 'move', targetId: item.id, where, visual: { anchor: row, side: where, level }, hint: (where === 'before' ? 'Antes de «' : 'Después de «') + item.label + '»' };
+}
+// Sobre el círculo: en el centro de otro, intercambiar (o entrar si es un grupo; Alt agrupa,
+// Mayús intercambia con el grupo); a un lado, colocarse antes o después siguiendo el giro.
+function stageTarget(x, y) {
+  if (!stage) return null;
+  const banned = new Set([drag.id, ...descendants(drag.item)]);
+  let best = null;
+  for (const s of stage.slots()) { if (banned.has(s.id)) continue; const d = Math.hypot(x - s.x, y - s.y); if (!best || d < best.d) best = { ...s, d }; }
+  const fromLibrary = locate(drag.id)?.library;
+  if (!best || best.d > best.size / 2 + Math.max(30, best.size * .75)) return fromLibrary ? { zone: 'stage', op: 'ring', hint: 'Añadir al final del anillo' } : { zone: 'stage', op: 'none', hint: 'Acércala a un círculo para colocarla' };
+  const target = locate(best.id)?.item; if (!target) return null;
+  // A lo largo del giro se ordena; hacia dentro o hacia fuera del círculo sigue siendo él.
+  const a = best.angle * Math.PI / 180, along = -Math.sin(a) * (x - best.x) + Math.cos(a) * (y - best.y);
+  if (Math.abs(along) <= best.size * .32 && best.d <= best.size / 2 + 12) {
+    if (target.type === 'group' && !drag.shift) return { zone: 'stage', op: 'move', where: 'into', targetId: best.id, slot: best, hint: 'Añadir a «' + target.label + '»' };
+    if (drag.alt) return { zone: 'stage', op: 'group', targetId: best.id, slot: best, hint: 'Crear un grupo con ambas acciones' };
+    return { zone: 'stage', op: 'swap', targetId: best.id, slot: best, hint: 'Intercambiar con «' + target.label + '»' };
+  }
+  const where = along < 0 ? 'before' : 'after';
+  return { zone: 'stage', op: 'move', targetId: best.id, where, slot: best, hint: (where === 'before' ? 'Colocar antes de «' : 'Colocar después de «') + target.label + '»' };
+}
+// Lo mismo que comprueban moveItem, swapItems, groupItems y toLibrary, sin tocar nada.
+function problemFor(t) {
+  const from = locate(drag.id); if (!from) return 'Esta acción ya no existe.';
+  if (t.op === 'library') return from.library ? '' : from.list.length <= minimum(from.parent, from.list) ? lowMessage(from.parent) : config.library.length >= MAX_LIBRARY ? fullMessage(null, config.library) : '';
+  if (t.op === 'ring') return config.items.length >= MAX_ITEMS ? fullMessage(null, config.items) : '';
+  const to = locate(t.targetId); if (!to) return '';
+  if (t.op === 'swap') return canPlace(from.item, to.parent, to.level - 1) || canPlace(to.item, from.parent, from.level - 1);
+  if (t.op === 'group') {
+    if (contains(from.item, t.targetId) || contains(to.item, drag.id)) return 'No se puede agrupar una acción con uno de sus propios grupos.';
+    if (to.level + 1 + Math.max(height(from.item), height(to.item)) > MAX_LEVEL) return 'Solo caben dos niveles de grupos.';
+    return from.list.length <= minimum(from.parent, from.list) ? lowMessage(from.parent) : '';
+  }
+  const into = t.where === 'into', list = into ? to.item.items : to.list, parent = into ? to.item : to.parent;
+  const problem = canPlace(from.item, parent, into ? to.level : to.level - 1); if (problem) return problem;
+  if (list !== from.list) { if (list.length >= capacity(parent, list)) return fullMessage(parent, list); if (from.list.length <= minimum(from.parent, from.list)) return lowMessage(from.parent); }
+  return '';
+}
+function noopFor(t) {
+  const from = locate(drag.id); if (!from) return true;
+  if (t.op === 'library') return from.library;
+  if (t.op === 'ring') return !from.library;
+  if (t.op !== 'move') return t.targetId === drag.id;
+  if (t.targetId === drag.id) return true;
+  const to = locate(t.targetId); if (!to) return true;
+  if (t.where === 'into') return to.item.items === from.list && from.index === from.list.length - 1;
+  const index = to.index + (t.where === 'after' ? 1 : 0);
+  return to.list === from.list && (index === from.index || index === from.index + 1);
+}
+function placeSlot(v, blocked) {
+  slot.classList.toggle('blocked', !!blocked);
+  const level = String(v.level ?? 0);
+  const there = v.side === 'end' ? slot.isConnected && !slot.nextElementSibling : v.side === 'before' ? slot.nextElementSibling === v.anchor : slot.previousElementSibling === v.anchor;
+  if (there && slot.style.getPropertyValue('--level') === level) return;
+  if (!slot.style.height) slot.style.height = '42px';
+  flip(listRows(), () => {
+    if (v.side === 'end') $('#actions').append(slot); else if (v.side === 'before') v.anchor.before(slot); else v.anchor.after(slot);
+    slot.style.setProperty('--level', level);
+  });
+}
+function liftSlot() { if (slot.isConnected) flip(listRows(), () => slot.remove()); }
+let springTimer = 0;
+function show(t) {
+  if (t && t.op !== 'none') { t.noop = noopFor(t); t.problem = t.noop ? '' : problemFor(t); }
+  const key = t ? [t.zone, t.op, t.targetId, t.where, t.visual?.side, t.visual?.level, t.problem, t.noop].join('|') : '';
+  drag.target = t;
+  shapeGhost(t?.zone === 'stage' ? 'circle' : 'row');
+  if (key === drag.key) return;
+  drag.key = key;
+  const ok = t && t.op !== 'none' && !t.problem && !t.noop;
+  $('#library-card').classList.toggle('drop-zone', t?.zone === 'library' && ok);
+  $('#ring-store').classList.toggle('drop-zone', t?.zone === 'store' && ok);
+  $$('#actions .drop-into').forEach(r => r.classList.remove('drop-into', 'blocked'));
+  if (t?.zone === 'list' && t.where === 'into') { liftSlot(); rowOf(t.targetId)?.classList.add('drop-into'); rowOf(t.targetId)?.classList.toggle('blocked', !!t.problem); }
+  else if (t?.zone === 'list' && t.visual) placeSlot(t.visual, t.problem);
+  else if (drag.source === 'list') placeSlot(drag.home, false);
+  else liftSlot();
+  clearTimeout(springTimer);
+  if (stage) {
+    if (t?.zone === 'stage' && t.slot && ok && (t.where === 'before' || t.where === 'after')) { stage.target(null); stage.gap(t.slot.level, t.slot.index + (t.where === 'after' ? 1 : 0)); }
+    else { stage.clearGap(); stage.target(t?.zone === 'stage' && t.slot && !t.noop ? t.targetId : null); }
+    // Mantener un instante sobre un grupo cerrado lo abre, para colocar dentro con precisión.
+    if (t?.zone === 'stage' && t.where === 'into' && ok) springTimer = setTimeout(() => { if (drag?.key === key) { stage.reveal(t.targetId); stage.lift(drag.id); drag.key = null; } }, 650);
+  }
+  const hint = t?.zone === 'stage' ? (t.problem || (t.noop ? '' : t.hint)) : '';
+  if (hint) $('#stage').dataset.dropHint = hint; else $('#stage').removeAttribute('data-drop-hint');
+  drag.tip.textContent = !t ? '' : t.problem || (t.noop ? 'Sin cambios' : t.hint);
+  drag.ghost.dataset.state = !t || t.op === 'none' || t.noop ? 'idle' : t.problem ? 'blocked' : 'ok';
+}
+
+// Una foto de dónde se ve cada cosa antes de reordenar, para que después viaje desde ahí.
+function layout() {
+  return { rows: new Map(listRows().map(r => [r.dataset.id, r.getBoundingClientRect()])), circles: stage ? new Map(stage.slots().map(s => [s.id, { x: s.vx, y: s.vy }])) : null };
+}
+function replayLayout(before, { landing } = {}) {
+  if (!motionOn()) return;
+  for (const r of listRows()) {
+    if (r.dataset.id === landing) continue;
+    const was = before.rows.get(r.dataset.id), now = r.getBoundingClientRect();
+    if (!was || !was.height) { r.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: EASE }); continue; }
+    const dx = was.left - now.left, dy = was.top - now.top;
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) r.animate([{ transform: `translate(${dx}px,${dy}px)` }, { transform: 'none' }], { duration: 260, easing: EASE });
+  }
+  stage?.flipFrom(before.circles, { landing });
+}
+// Para cambios hechos con botones (mover, duplicar, eliminar): todo se recoloca con suavidad.
+function withFlip(change) { const before = layout(); change(); replayLayout(before); }
+function cleanup(current) {
+  clearTimeout(springTimer);
+  current.el.classList.remove('dragging');
+  $$('#actions .is-dragging,#actions .drag-origin,#actions .drop-into').forEach(r => r.classList.remove('is-dragging', 'drag-origin', 'drop-into', 'blocked'));
+  $$('.drop-zone').forEach(el => el.classList.remove('drop-zone'));
+  slot.remove(); slot.className = 'row-slot';
+  $('#stage').removeAttribute('data-drop-hint');
+  stage?.clearGap(); stage?.target(null); stage?.lift(null);
+}
+// La copia vuela a `box` (en pantalla) y se va; mientras, lo que aterriza espera invisible.
+function land(current, box, { fade = false, hide = null } = {}) {
+  const g = current.ghost, from = getComputedStyle(g).transform, size = g.getBoundingClientRect();
+  if (!motionOn() || !box) { g.remove(); return; }
+  g.classList.remove('is-lifted'); g.classList.add('is-landing');
+  const time = 230;
+  hide?.animate([{ opacity: 0 }, { opacity: 0 }], { duration: time });
+  // Si la forma no coincide (una fila que vuelve a ser círculo), se encoge entera y se funde.
+  if (Math.abs(size.width / size.height - box.width / box.height) > .35) fade = true;
+  let w = box.width / size.width, h = box.height / size.height;
+  if (fade) w = h = Math.min(w, h) * .6;
+  const x = box.left + box.width / 2 - size.width / 2, y = box.top + box.height / 2 - size.height / 2;
+  const a = g.animate([{ transform: from, opacity: 1 }, { transform: `translate(${x}px,${y}px) scale(${w.toFixed(3)},${h.toFixed(3)})`, opacity: fade ? 0 : 1 }], { duration: time, easing: EASE, fill: 'forwards' });
+  settling = Date.now() + time;
+  a.finished.then(() => g.remove(), () => g.remove());
+}
+function finishDrag(commit) {
+  const current = drag; press = null;
+  if (!current) return;
+  if (commit) hover();
+  cancelAnimationFrame(current.frame);
+  const t = commit ? current.target : null;
+  drag = null; dragId = null; delete document.body.dataset.dragging;
+  try { $('#page-actions').releasePointerCapture(current.pointer); } catch { /* ya se soltó */ }
+  swallowClick = true; setTimeout(() => { swallowClick = false; });
+  const valid = t && t.op !== 'none' && !t.noop && !t.problem;
+  const before = valid ? layout() : null;
+  if (valid) cleanup(current); else flip(listRows(), () => cleanup(current));
+  if (!valid) {
+    if (t?.problem) toast(t.problem);
+    // De vuelta a su sitio, como si nada.
+    const back = current.source === 'stage' ? stage?.slots().find(s => s.id === current.id) : null;
+    land(current, back ? { left: back.x - back.size / 2, top: back.y - back.size / 2, width: back.size, height: back.size } : current.origin);
+    return;
+  }
+  const was = snap();
+  if (t.op === 'library') toLibrary(current.id);
+  else if (t.op === 'ring') toRing(current.id);
+  else if (t.op === 'swap') swapItems(current.id, t.targetId);
+  else if (t.op === 'group') groupItems(current.id, t.targetId);
+  else moveItem(current.id, t.targetId, t.where);
+  if (snap() === was) { land(current, current.origin, { fade: true }); return; }
+  // Dónde aterriza: su fila, su círculo o su ficha; si quedó dentro de un grupo plegado o
+  // de un arco cerrado, en ese grupo, y ahí se funde.
+  const circle = stage?.slots().find(s => s.id === current.id);
+  const row = rowOf(current.id), tile = $(`#library .tile[data-id="${CSS.escape(current.id)}"]`);
+  let box = null, fade = false, hide = null;
+  if (t.zone === 'stage' && circle) { box = { left: circle.x - circle.size / 2, top: circle.y - circle.size / 2, width: circle.size, height: circle.size }; hide = circle.el; }
+  else if (t.zone === 'list' && row) { box = row.getBoundingClientRect(); hide = row; }
+  else if (t.op === 'library' && tile && !$('#library-card').hidden) { box = tile.getBoundingClientRect(); hide = tile; }
+  else { const parent = locate(current.id)?.parent, anchor = (parent && (rowOf(parent.id) || stage?.slots().find(s => s.id === parent.id)?.el)) || (t.op === 'library' ? $('#library-toggle') : null); box = anchor?.getBoundingClientRect() || null; fade = true; }
+  replayLayout(before, { landing: current.id });
+  land(current, box, { fade, hide });
+}
+document.addEventListener('pointerup', e => { if (press && e.pointerId === press.pointer) { if (drag) finishDrag(true); else press = null; } });
+document.addEventListener('pointercancel', () => { if (press) finishDrag(false); press = null; });
+window.addEventListener('blur', () => { if (drag) finishDrag(false); press = null; });
+document.addEventListener('keydown', e => {
+  if (!drag) return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finishDrag(false); return; }
+  if (e.key === 'Alt' || e.key === 'Shift') { e.preventDefault(); drag.alt = e.altKey; drag.shift = e.shiftKey; drag.key = null; }
 }, true);
-$('#stage').addEventListener('dragleave', e => { if (!$('#stage').contains(e.relatedTarget)) clearCircleDrop(); });
-$('#stage').addEventListener('drop', e => {
-  const hit = circleDropTarget(e); if (!dragId || !hit) return;
-  e.preventDefault(); e.stopPropagation(); const id = dragId, target = locate(hit.button.dataset.id)?.item; endDrag();
-  if (!target || id === target.id) return;
-  if (hit.where !== 'center') moveItem(id, target.id, hit.where);
-  else if (target.type === 'group' && !e.shiftKey) moveItem(id, target.id, 'into');
-  else if (e.altKey) groupItems(id, target.id);
-  else swapItems(id, target.id);
-}, true);
+document.addEventListener('keyup', e => { if (drag && (e.key === 'Alt' || e.key === 'Shift')) { drag.alt = e.altKey; drag.shift = e.shiftKey; drag.key = null; } }, true);
+// El clic que termina un arrastre no debe abrir ni marcar nada.
+document.addEventListener('click', e => { if (swallowClick) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 $('#stage').addEventListener('pointerleave', () => stage?.clearAim());
 $('#replay').onclick = () => drawStage(true);
 
@@ -701,7 +967,11 @@ function drawClipboard() {
   if (clipDraftKey !== key) { $('#clip-text').value = ''; clipDraftKey = key; }
   $('#clip-slot').value = item.target; $('#clip-mode').value = item.fileMode || 'copy'; $('#clip-action').value = item.clipAction || 'paste';
   const clip = state.clips?.[item.target];
-  $('#clip-status').textContent = clipBusy ? 'Procesando…' : !clip ? 'Todavía no has guardado contenido' : clip.kind === 'text' ? 'Texto guardado' : clip.mode === 'copy' ? 'Copia guardada en HALO' : 'Referencia al original';
+  const files = clip?.kind === 'files' ? clip.preview.split('\n\n').length : 0;
+  $('#clip-status').textContent = clipBusy ? 'Procesando…' : !clip ? 'Todavía no has guardado contenido' : clip.kind === 'text' ? 'Texto guardado' : (files === 1 ? '1 elemento' : files + ' elementos') + (clip.mode === 'copy' ? ' · copia fija en HALO' : ' · ruta al original');
+  const mode = item.fileMode || 'copy';
+  $$('.clip-mode-pick [data-mode]').forEach(b => { const on = b.dataset.mode === mode; b.classList.toggle('selected', on); b.setAttribute('aria-checked', String(on)); });
+  $('#clip-explorer').hidden = state.platform !== 'win32';
   $('#clip-preview').textContent = clip?.preview || '';
   $('#clip-action-help').textContent = (item.clipAction || 'paste') === 'paste'
     ? 'Archivos: coloca el ratón sobre una carpeta abierta del Explorador o sobre el escritorio y abre el anillo con tu atajo. Se usa ese destino; si no se reconoce, podrás elegirlo. Texto: se pega en la aplicación anterior.'
@@ -717,7 +987,8 @@ async function saveClipboard(op, extra = {}, item = current()) {
   clipBusy = true; drawClipboard();
   try {
     const result = await window.aptic.clipboard({ slot: item.target, mode: item.fileMode || 'copy', op, ...extra });
-    if (result?.clips) { state.clips = result.clips; drawList(); drawLibrary(); toast(op === 'copy' ? 'Copiado. Ya puedes pegarlo donde quieras.' : op === 'paste-folder' ? 'Contenido pegado en la carpeta elegida.' : op === 'clear' ? 'Espacio vaciado.' : 'Guardado en el espacio ' + item.target + '.'); }
+    const c = result?.captured, saved = c?.count ? c.count + (c.count === 1 ? ' elemento' : ' elementos') + (c.source === 'selection' ? ' del Explorador' : ' del portapapeles') + (c.mode === 'copy' ? ' como copia fija' : ' como ruta al original') : '';
+    if (result?.clips) { state.clips = result.clips; drawList(); drawLibrary(); toast(op === 'copy' ? 'Copiado. Ya puedes pegarlo donde quieras.' : op === 'paste-folder' ? 'Contenido pegado en la carpeta elegida.' : op === 'clear' ? 'Espacio vaciado.' : saved ? 'Espacio ' + item.target + ': ' + saved + '.' : 'Guardado en el espacio ' + item.target + '.'); }
   } catch (error) { toast(cleanError(error.message)); }
   finally { clipBusy = false; drawClipboard(); }
 }
@@ -725,6 +996,9 @@ $('#clip-slot').onchange = e => { const item = current(); item.target = e.target
 $('#clip-mode').onchange = e => { current().fileMode = e.target.value; commit(); };
 $('#clip-action').onchange = e => { current().clipAction = e.target.value; commit(); };
 $('#clip-capture').onclick = () => saveClipboard('capture');
+$('#clip-explorer').onclick = () => saveClipboard('capture', { from: 'explorer' });
+// Copia fija o ruta al original, a la vista: decide qué se guarda la próxima vez.
+$$('.clip-mode-pick [data-mode]').forEach(b => b.onclick = () => { const item = current(); if (!item || (item.fileMode || 'copy') === b.dataset.mode) return; item.fileMode = b.dataset.mode; commit(); toast(b.dataset.mode === 'copy' ? 'Lo próximo que guardes será una copia fija.' : 'Lo próximo que guardes será la ruta al original: al pegar se usará su versión actual.'); });
 $('#clip-pick').onclick = () => saveClipboard('pick');
 $('#clip-pick-folder').onclick = () => saveClipboard('pick-folder');
 $('#clip-copy').onclick = () => saveClipboard('copy');
@@ -942,27 +1216,98 @@ function addItem(group) {
   if (group && at.level >= MAX_LEVEL) { const loc = locate(selected), p = locate(loc.item.type === 'group' ? loc.item.id : loc.parent.id); at = { list: p.list, index: p.index + 1, parent: p.parent, level: p.level }; }
   if (insert(group ? newItem('group', at.level ? 'Nuevo subgrupo' : 'Nuevo grupo') : newItem('url'), at)) setTimeout(() => { $('#action-name').focus(); $('#action-name').select(); }, 0);
 }
-$('#add').onclick = () => addItem(false);
+// Añadir empieza preguntando qué: cada tipo crea la acción ya nombrada y lleva directo al
+// único campo que falta (la dirección, la combinación, el texto, la carpeta o la aplicación).
+function openAdd() {
+  const at = insertionPoint();
+  $('#add-where').textContent = at.parent ? 'Se añadirá dentro de «' + at.parent.label + '».' : 'Se añadirá al anillo, después de la acción elegida.';
+  $('#add-query').value = ''; drawRecipes(); $('#add-dialog').showModal();
+  $('#add-dialog [data-add]').focus();
+}
+function drawRecipes() {
+  const q = normalizeText($('#add-query').value.trim());
+  const list = RECIPES.filter(r => (state.platform === 'win32' || !r[2].startsWith('Super+')) && normalizeText(r[0] + ' ' + prettyKeys(r[2]) + ' ' + (SYSTEM_NAME[r[2]] || '')).includes(q));
+  $('#add-recipes').replaceChildren(...list.map(([label, type, target, glyph]) => {
+    const b = document.createElement('button'); b.className = 'add-recipe';
+    b.innerHTML = icon(glyph, config.iconStyle) + '<span></span><small></small>';
+    b.querySelector('span').textContent = label; b.querySelector('small').textContent = type === 'keys' ? prettyKeys(target) : 'Carpeta';
+    b.onclick = () => { $('#add-dialog').close(); const item = newItem(type, label); item.target = target; item.icon = glyph; if (insert(item, insertionPoint())) toast('«' + label + '» añadida. Puedes cambiarla en el panel derecho.'); };
+    return b;
+  }));
+  if (!list.length) $('#add-recipes').innerHTML = '<p class="list-empty">Nada coincide. Elige un tipo de arriba.</p>';
+}
+const STARTERS = { folder: ['system', 'Descargas', 'downloads', 'download'], url: ['url', 'Nueva web', 'https://', 'globe'], keys: ['keys', 'Nuevo atajo', '', 'keyboard'], text: ['text', 'Nuevo texto', '', 'type'], settings: ['settings', 'Abrir HALO', '', 'settings'] };
+function addKind(kind) {
+  if (kind === 'path') return openApps('add');
+  if (kind === 'clipboard') return $('#add-clipboard-single').click();
+  if (kind === 'group') return addItem(true);
+  const [type, label, target, glyph] = STARTERS[kind], item = newItem(type, label);
+  item.target = target; item.icon = glyph;
+  if (!insert(item, insertionPoint())) return;
+  setTimeout(() => {
+    const field = { folder: '#system-target', url: '#action-url', keys: '#action-keys', text: '#action-text', settings: '#action-name' }[kind], el = $(field);
+    el.focus(); if (kind === 'url') el.setSelectionRange(el.value.length, el.value.length);
+    if (kind === 'folder') try { el.showPicker(); } catch { /* sin desplegable automático */ }
+  }, 0);
+}
+$('#add-query').oninput = drawRecipes;
+$('#add-close').onclick = () => $('#add-dialog').close();
+$('#add-dialog').onclick = e => { if (e.target === $('#add-dialog')) $('#add-dialog').close(); };
+$$('#add-dialog [data-add]').forEach(b => b.onclick = () => { $('#add-dialog').close(); addKind(b.dataset.add); });
+$('#add').onclick = openAdd;
 $('#add-group').onclick = () => addItem(true);
 $('#add-app').onclick = () => openApps('add');
-$('#group-add').onclick = () => addItem(false);
+$('#group-add').onclick = openAdd;
 $('#group-add-sub').onclick = () => addItem(true);
 $('#remove').onclick = () => {
   const loc = locate(selected); if (!loc || loc.list.length <= minimum(loc.parent, loc.list)) return;
-  loc.list.splice(loc.index, 1);
-  selected = (loc.list[Math.min(loc.index, loc.list.length - 1)] || loc.parent || config.items[0]).id;
-  commit(); toast('«' + loc.item.label + '» eliminada. Ctrl + Z para deshacer.');
+  withFlip(() => {
+    loc.list.splice(loc.index, 1);
+    selected = (loc.list[Math.min(loc.index, loc.list.length - 1)] || loc.parent || config.items[0]).id;
+    commit();
+  });
+  toast('«' + loc.item.label + '» eliminada. Ctrl + Z para deshacer.');
 };
 $('#duplicate').onclick = () => {
   const loc = locate(selected); if (!loc || loc.list.length >= capacity(loc.parent, loc.list)) return;
   const copy = structuredClone(loc.item); copy.label = (copy.label + ' (copia)').slice(0, 50); delete copy.hotkey;
   const fresh = item => { item.id = newId(); delete item.hotkey; (item.items || []).forEach(fresh); }; fresh(copy);
-  loc.list.splice(loc.index + 1, 0, copy); selected = copy.id; commit();
+  withFlip(() => { loc.list.splice(loc.index + 1, 0, copy); selected = copy.id; commit(); });
+};
+$('#quick-duplicate').onclick = () => $('#duplicate').click();
+$('#quick-remove').onclick = () => $('#remove').click();
+// Al principio o al final de su lista, viajando entre las demás.
+for (const [id, end] of [['move-first', 0], ['move-last', 1]]) $('#' + id).onclick = () => {
+  const loc = locate(selected); if (!loc) return;
+  withFlip(() => { loc.list.splice(loc.index, 1); if (end) loc.list.push(loc.item); else loc.list.unshift(loc.item); commit(); });
+};
+$('#action-note').oninput = e => { const item = current(); const note = e.target.value.slice(0, 120); if (note.trim()) item.note = note; else delete item.note; commit({ key: 'note:' + item.id }); };
+function setVisible(visible) {
+  const item = current(), loc = locate(selected); if (!item || loc.library) return;
+  if (visible) delete item.hidden; else item.hidden = true;
+  commit();
+  const shown = list => list.filter(i => !i.hidden).length;
+  toast(visible ? '«' + item.label + '» vuelve a salir en el anillo.' : !shown(config.items) ? 'Todas las acciones están ocultas: el anillo las mostrará todas hasta que vuelvas a mostrar alguna.' : '«' + item.label + '» oculta en el anillo. Se conserva aquí' + (item.hotkey ? ' y su atajo sigue funcionando.' : '.'));
+}
+$('#action-visible').onchange = e => setVisible(e.target.checked);
+$('#toggle-visible').onclick = () => setVisible(!!current()?.hidden);
+$('#reset-icon').onclick = () => { const item = current(); item.icon = DEFAULT_ICON[item.type]; delete item.image; commit(); };
+$('#run-action').onclick = async () => {
+  const item = current(); if (!item) return;
+  try { await saveNow(); await window.aptic.run(item.id); toast('«' + item.label + '» ejecutada.'); } catch (error) { toast(cleanError(error.message)); }
+};
+$('#copy-to-profile').onchange = e => {
+  const target = config.profiles.find(p => p.id === e.target.value), item = current(); e.target.value = '';
+  if (!target || !item) return;
+  if (target.items.length >= MAX_ITEMS) return toast('«' + target.name + '» ya tiene ' + MAX_ITEMS + ' acciones.');
+  const copy = structuredClone(item), fresh = it => { it.id = newId(); delete it.hotkey; (it.items || []).forEach(fresh); }; fresh(copy);
+  target.items.push(copy); commit();
+  toast('«' + item.label + '» copiada al perfil «' + target.name + '». Los atajos directos no se copian.');
 };
 for (const [id, delta] of [['move-up', -1], ['move-down', 1]]) $('#' + id).onclick = () => {
   const loc = locate(selected), next = loc.index + delta;
   if (next < 0 || next >= loc.list.length) return;
-  [loc.list[loc.index], loc.list[next]] = [loc.list[next], loc.list[loc.index]]; commit();
+  withFlip(() => { [loc.list[loc.index], loc.list[next]] = [loc.list[next], loc.list[loc.index]]; commit(); });
 };
 $('#action-place').onchange = e => {
   const loc = locate(selected);
@@ -1002,10 +1347,21 @@ async function pickFolder() {
   } catch (error) { notice(cleanError(error.message)); }
 }
 $('#action-path').oninput = e => { const item = current(); item.target = e.target.value.trim(); commit({ key: 'path:' + item.id }); };
-$('#action-url').oninput = e => { const item = current(); item.target = e.target.value.trim(); commit({ key: 'url:' + item.id }); };
-$('#action-text').oninput = e => { const item = current(); item.target = e.target.value; commit({ key: 'text:' + item.id }); };
+// Mientras la acción no tenga un nombre propio, se nombra sola: con la web o con el texto.
+const siteName = url => { try { const host = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; return host ? host[0].toUpperCase() + host.slice(1) : ''; } catch { return ''; } };
+const snippet = text => text.trim().split(/\s+/).join(' ').slice(0, 28);
+$('#action-url').oninput = e => {
+  const item = current(), was = siteName(item.target); item.target = e.target.value.trim();
+  if ((unnamed(item) || item.label === was) && siteName(item.target)) { item.label = siteName(item.target); setValue($('#action-name'), item.label); }
+  commit({ key: 'url:' + item.id });
+};
+$('#action-text').oninput = e => {
+  const item = current(), was = snippet(item.target); item.target = e.target.value;
+  if ((unnamed(item) || item.label === was) && snippet(item.target)) item.label = snippet(item.target);
+  commit({ key: 'text:' + item.id });
+};
 const fileName = target => target.split(/[\\/]/).pop().replace(/\.(exe|lnk|app|url)$/i, '').slice(0, 50);
-const unnamed = item => /^(Nueva acción|Nuevo grupo|Nuevo subgrupo)$/.test(item.label) || item.label === TYPE_NAME[item.type];
+const unnamed = item => /^(Nueva acción|Nuevo grupo|Nuevo subgrupo|Nueva web|Nuevo atajo|Nuevo texto)$/.test(item.label) || item.label === TYPE_NAME[item.type];
 for (const [id, kind] of [['pick-file', 'file'], ['pick-folder', 'folder']]) $('#' + id).onclick = async () => {
   try {
     if (kind === 'folder' && current().type === 'folder') return pickFolder();
@@ -1169,6 +1525,9 @@ function showPage(name) {
 const PALETTES = { graphite: ['#24262b', '#f3f1ee', '#e0a44f'], lagoon: ['#102c32', '#e0f6f1', '#4cc0bd'], lavender: ['#282238', '#f2eafa', '#b9a0ec'], cream: ['#eee7d9', '#38342e', '#aa683c'] };
 $$('[data-palette]').forEach(button => button.onclick = () => { [config.ringBackground, config.ringForeground, config.ringAccent] = PALETTES[button.dataset.palette]; config.customRingColors = true; commit(); });
 $$('.nav [data-page]').forEach(b => b.onclick = () => showPage(b.dataset.page));
+// Todo lo que hace falta para el aspecto «Halo» de una vez: el estilo solo no basta si los
+// nombres van en el centro (el centro crece) o los iconos son de color.
+$('#halo-preset').onclick = () => { Object.assign(config, { style: 'halo', iconStyle: 'linea', labels: 'hover', hubSize: 36, itemBorder: false }); commit({ replay: true }); toast('Aspecto «Halo» aplicado. Ctrl + Z para volver al anterior.'); };
 
 // Datos.
 $('#export').onclick = async () => { try { if (await window.aptic.export(config)) toast('Copia exportada.'); } catch (error) { notice(cleanError(error.message)); } };
@@ -1185,6 +1544,7 @@ $('#quit').onclick = async () => { await saveNow(); window.aptic.quit(); };
 document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey, typing = e.target.closest('input:not([type=range]):not([type=checkbox]),textarea');
   if (page === 'actions' && !document.querySelector('dialog[open]')) {
+    if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); openAdd(); return; }
     if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); const field = $('#library-card').hidden ? $('#action-search') : $('#library-search'); field.focus(); field.select(); return; }
     if (e.key === 'Escape' && selectionMode && !typing) { e.preventDefault(); setSelectionMode(false); return; }
     if (e.key === 'Escape' && e.target === $('#action-search')) { e.preventDefault(); $('#action-search').value = ''; drawList(); return; }

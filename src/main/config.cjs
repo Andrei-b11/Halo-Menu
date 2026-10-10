@@ -5,7 +5,7 @@ const path = require('node:path');
 // por defecto salen de estas tablas: añadir un ajuste es añadir una línea.
 const CHOICES = {
   theme: ['carbon', 'midnight', 'paper', 'light', 'system'],
-  style: ['bubbles', 'ring', 'pie', 'glass', 'minimal'],
+  style: ['bubbles', 'ring', 'pie', 'glass', 'minimal', 'halo'],
   shape: ['circle', 'squircle'],
   mouseMode: ['hold', 'single', 'double'],
   selectionMode: ['sector', 'precise', 'dwell'],
@@ -125,9 +125,15 @@ function validateItem(item, ids, level, lenient) {
   if (image !== '' && (typeof image !== 'string' || image.length > MAX_IMAGE || !/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(image))) fail(where + 'imagen no válida.');
   const hotkey = item.hotkey ?? '';
   if (hotkey !== '' && (typeof hotkey !== 'string' || !GLOBAL_SHORTCUT.test(hotkey))) fail(where + 'atajo directo no válido.');
+  const note = item.note ?? '';
+  if (typeof note !== 'string' || note.length > 120 || note.includes(' ')) fail(where + 'la nota admite hasta 120 caracteres.');
+  if (item.hidden !== undefined && typeof item.hidden !== 'boolean') fail(where + 'valor de visibilidad no válido.');
   const clean = { id: item.id, label: item.label.trim(), type: item.type, target: item.type === 'group' || item.type === 'settings' ? '' : item.target, icon: item.icon, color };
   if (image) clean.image = image;
   if (hotkey) clean.hotkey = hotkey;
+  // Una nota breve que el anillo enseña bajo el nombre, y acciones guardadas pero ocultas.
+  if (note.trim()) clean.note = note.trim();
+  if (item.hidden === true) clean.hidden = true;
   if (item.type === 'clipboard') { clean.fileMode = item.fileMode ?? 'copy'; clean.clipAction = item.clipAction ?? 'paste'; }
   const mine = new Set([item.id]);
   if (item.type === 'group') {

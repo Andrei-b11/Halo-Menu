@@ -126,3 +126,10 @@ test('double tap requires release and ignores autorepeat', () => {
 test('double tap rejects stale and wrong-modifier sequences', () => {
   let count = 0; const tap = new DoubleTap(350, () => count++); tap.press(true); tap.release(0); tap.press(true); tap.release(500); assert.equal(count, 0); tap.press(false); tap.release(550); tap.press(true); tap.release(600); assert.equal(count, 0); tap.reset(); tap.press(true); tap.release(610); assert.equal(count, 0);
 });
+test('actions keep a short note and can be hidden from the ring', () => {
+  const next = defaults(); next.items[0].note = '  Lo de cada día  '; next.items[1].hidden = true;
+  const clean = validate(next);
+  assert.equal(clean.items[0].note, 'Lo de cada día'); assert.equal(clean.items[1].hidden, true); assert.equal('hidden' in clean.items[0], false);
+  next.items[1].hidden = false; assert.equal('hidden' in validate(next).items[1], false);
+  for (const patch of [{ note: 'x'.repeat(121) }, { note: 4 }, { hidden: 'yes' }]) { const bad = defaults(); Object.assign(bad.items[0], patch); assert.throws(() => validate(bad)); }
+});

@@ -36,8 +36,9 @@ const editorVisible = app => app.evaluate(({ BrowserWindow }) => BrowserWindow.g
     await page.locator('#action-name').fill('Mis archivos'); await saved(page);
     assert.equal(disk(profile).items[0].label, 'Mis archivos'); checks.push('Edición con guardado automático');
 
-    await page.locator('#add').click(); await page.locator('#action-name').fill('Portal'); await page.locator('#action-url').fill('https://example.com'); await saved(page);
+    await page.locator('#add').click(); await page.locator('#add-dialog [data-add="url"]').click(); await page.locator('#action-name').fill('Portal'); await page.locator('#action-url').fill('https://example.com'); await saved(page);
     assert.equal(disk(profile).items[1].label, 'Portal'); assert.equal(disk(profile).items.length, 9); checks.push('Añadir acción tras la elegida');
+    await page.locator('#insp-more').evaluate(d => { d.open = true; });
     await page.locator('#action-place').selectOption('edit'); await saved(page);
     assert.equal(disk(profile).items.find(i => i.id === 'edit').items.at(-1).label, 'Portal'); checks.push('Mover una acción a un submenú');
     await page.locator('#types [data-type="keys"]').click(); await page.locator('#action-keys').focus(); await page.keyboard.press('Control+Shift+T'); await saved(page);
@@ -64,7 +65,7 @@ const editorVisible = app => app.evaluate(({ BrowserWindow }) => BrowserWindow.g
     // Tu caso: una acción a medias ya no bloquea el resto. Se aplica el gesto y la acción conserva su versión anterior.
     await page.locator('[data-page="actions"]').click(); await page.locator('.row[data-id="files"]').click();
     await page.locator('#types [data-type="path"]').click(); await page.locator('#apps-close').click();
-    await page.locator('[data-page="shortcut"]').click(); await page.locator('#shortcut-mode [data-value="double"]').click(); await page.locator('[data-setting="modifierTap"] [data-value="Control"]').click();
+    await page.locator('[data-page="shortcut"]').click(); await page.evaluate(() => document.querySelectorAll('details.more-settings').forEach(d => { d.open = true; })); await page.locator('#shortcut-mode [data-value="double"]').click(); await page.locator('[data-setting="modifierTap"] [data-value="Control"]').click();
     await page.waitForFunction(() => document.querySelector('#save-state').dataset.state === 'partial');
     assert.equal(disk(profile).shortcut.mode, 'double'); assert.equal(disk(profile).modifierTap, 'Control'); assert.equal(disk(profile).items[0].type, 'system');
     await page.screenshot({ path: path.join(output, '04-gestos.png') });
@@ -109,12 +110,14 @@ const editorVisible = app => app.evaluate(({ BrowserWindow }) => BrowserWindow.g
     const ringBefore = disk(profile).items.length;
     await page.locator('.row[data-id="pictures"]').hover(); await page.locator('.row[data-id="pictures"] .row-remove').click(); await settled(page);
     assert.equal(disk(profile).items.length, ringBefore - 1); assert.ok(disk(profile).library.some(i => i.id === 'pictures'));
-    // Arrastre HTML5 con eventos reales del navegador (Playwright no lo simula en Electron).
-    const drag = (from, to) => page.evaluate(([a, b]) => { const src = document.querySelector(a), dst = document.querySelector(b), dt = new DataTransfer(); const r = dst.getBoundingClientRect(); const at = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + 20, clientY: r.top + r.height * .8 };
-      src.dispatchEvent(new DragEvent('dragstart', at)); dst.dispatchEvent(new DragEvent('dragover', at)); dst.dispatchEvent(new DragEvent('drop', at)); src.dispatchEvent(new DragEvent('dragend', at)); }, [from, to]);
-    await drag('.tile[data-id="pictures"]', '.row[data-id="files"]'); await settled(page);
-    assert.ok(disk(profile).items.some(i => i.id === 'pictures')); assert.ok(!disk(profile).library.some(i => i.id === 'pictures'));
+    // Arrastre con el puntero real: de la biblioteca a continuación de un círculo de la vista previa.
     await page.locator('#library-toggle').click();
+    const at = selector => page.locator(selector).first().evaluate(el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, a: parseFloat(el.style.getPropertyValue('--a') || '0') * Math.PI / 180 }; });
+    const tile = await at('.tile[data-id="pictures"]'), circle = await at('#stage [data-id="files"]');
+    await page.mouse.move(tile.x, tile.y); await page.mouse.down(); await page.mouse.move(tile.x + 8, tile.y + 4, { steps: 2 });
+    await page.mouse.move(circle.x - Math.sin(circle.a) * (circle.w / 2 + 5), circle.y + Math.cos(circle.a) * (circle.w / 2 + 5), { steps: 12 }); await page.waitForTimeout(60);
+    await page.mouse.up(); await settled(page); await page.waitForTimeout(300);
+    assert.ok(disk(profile).items.some(i => i.id === 'pictures')); assert.ok(!disk(profile).library.some(i => i.id === 'pictures'));
     await page.locator('.tile[data-id="lib-music"] .tile-add').click(); await settled(page);
     assert.ok(disk(profile).items.some(i => i.id === 'lib-music'));
     checks.push('Quitar con la ×, arrastrar desde la biblioteca y añadir con +');
@@ -146,7 +149,7 @@ const editorVisible = app => app.evaluate(({ BrowserWindow }) => BrowserWindow.g
     await overlay.keyboard.press('Enter'); await overlay.waitForSelector('.ring-arc .ring-sub', { state: 'attached' });
     assert.equal(await overlay.locator('.ring-sub').count(), 6);
     await overlay.screenshot({ path: path.join(output, '03-overlay.png') });
-    await overlay.keyboard.press('Backspace'); assert.equal(await overlay.locator('.ring-sub').count(), 0); assert.equal(await overlayVisible(app), true);
+    await overlay.keyboard.press('Backspace'); await overlay.waitForFunction(() => !document.querySelector('.ring-sub')); assert.equal(await overlayVisible(app), true);
     await overlay.keyboard.press('Escape'); await page.waitForTimeout(450); assert.equal(await overlayVisible(app), false); checks.push('Anillo real: teclado, submenú y cierre');
 
     // La X cierra el anillo aunque el cursor haya abierto un grupo al pasar por encima.

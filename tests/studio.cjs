@@ -30,23 +30,35 @@ const disk = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'
     await saved(page);
     assert.deepEqual(disk().items.slice(0, 2).map(i => i.id), ['downloads', 'files']);
     await page.locator('#undo').click(); await saved(page);
-    // At the edge of scaled circles Chromium may target the stage, not the button.
-    const coordinateDrop = (fromId, toId, altKey = false, edge = false) => page.evaluate(({ fromId, toId, altKey, edge }) => {
-      const host = document.querySelector('#stage'), src = host.querySelector('[data-id="' + fromId + '"]'), dt = new DataTransfer();
-      src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
-      const target = toId ? host.querySelector('[data-id="' + toId + '"]') : host, r = target.getBoundingClientRect();
-      const angle = parseFloat(target.style.getPropertyValue('--a')) * Math.PI / 180;
-      const side = edge === 'before' ? -1 : edge === 'after' ? 1 : 0;
-      const delta = r.width / 2 + 5;
-      const dx = side ? -Math.sin(angle) * delta * side : edge ? Math.cos(angle) * delta : 0;
-      const dy = side ? Math.cos(angle) * delta * side : edge ? Math.sin(angle) * delta : 0;
-      const at = { bubbles: true, cancelable: true, dataTransfer: dt, altKey, clientX: toId ? r.left + r.width / 2 + dx : r.left + 5, clientY: toId ? r.top + r.height / 2 + dy : r.top + 5 };
-      host.dispatchEvent(new DragEvent('dragover', at));
-      const feedback = { hint: host.dataset.dropHint, marker: !!host.querySelector('.insert-marker') };
-      host.dispatchEvent(new DragEvent('drop', at)); src.dispatchEvent(new DragEvent('dragend', at)); return feedback;
-    }, { fromId, toId, altKey, edge });
+    // Real pointer drags (the editor no longer uses native HTML5 drag and drop).
+    const mouseDrag = async (from, to, { alt = false } = {}) => {
+      await page.mouse.move(from.x, from.y); await page.mouse.down();
+      await page.mouse.move(from.x + 6, from.y + 6, { steps: 2 });
+      if (alt) await page.keyboard.down('Alt');
+      await page.mouse.move(to.x, to.y, { steps: 10 }); await page.waitForTimeout(80);
+      const feedback = await page.evaluate(() => ({ hint: document.querySelector('#stage').dataset.dropHint || '', marker: !!document.querySelector('#stage .ring-gap') }));
+      await page.mouse.up(); if (alt) await page.keyboard.up('Alt');
+      await page.waitForTimeout(320); return feedback;
+    };
+    // Positions are read once every glide has finished, as a person would aim.
+    const still = () => page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running' && !(a.effect?.getTiming().iterations === Infinity)));
+    const centerOf = async selector => { await still(); return page.locator(selector).first().evaluate(el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }); };
+    const coordinateDrop = async (fromId, toId, altKey = false, edge = false) => {
+      await still();
+      const to = await page.evaluate(({ toId, edge }) => {
+        const host = document.querySelector('#stage');
+        const target = toId ? host.querySelector('[data-id="' + toId + '"]') : host, r = target.getBoundingClientRect();
+        if (!toId) return { x: r.left + 5, y: r.top + 5 };
+        const angle = parseFloat(target.style.getPropertyValue('--a')) * Math.PI / 180;
+        const side = edge === 'before' ? -1 : edge === 'after' ? 1 : 0, delta = r.width / 2 + 5;
+        const dx = side ? -Math.sin(angle) * delta * side : edge ? Math.cos(angle) * delta : 0;
+        const dy = side ? Math.cos(angle) * delta * side : edge ? Math.sin(angle) * delta : 0;
+        return { x: r.left + r.width / 2 + dx, y: r.top + r.height / 2 + dy };
+      }, { toId, edge });
+      return mouseDrag(await centerOf('#stage [data-id="' + fromId + '"]'), to, { alt: altKey });
+    };
     const original = disk();
-    const topCircle = await page.locator('#stage [data-id="files"]').boundingBox();
+    await still(); const topCircle = await page.locator('#stage [data-id="files"]').boundingBox();
     await page.locator('#stage [data-id="pictures"]').dragTo(page.locator('#stage [data-id="files"]'), { targetPosition: { x: 2, y: topCircle.height / 2 } });
     await saved(page);
     assert.deepEqual(disk().items.map(i => i.id), ['pictures', ...original.items.map(i => i.id).filter(id => id !== 'pictures')], 'Real pointer drop beside a circle inserts before it');
@@ -57,7 +69,7 @@ const disk = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'
       const expected = original.items.map(i => i.id).filter(id => id !== source);
       expected.splice(expected.indexOf(target) + (side === 'after' ? 1 : 0), 0, source);
       const feedback = await coordinateDrop(source, target, false, side); await saved(page);
-      assert.equal(feedback.marker, true); assert.match(feedback.hint, side === 'before' ? /Colocar antes/ : /Colocar después/);
+      assert.equal(feedback.marker, true, JSON.stringify({ target, side, feedback })); assert.match(feedback.hint, side === 'before' ? /Colocar antes/ : /Colocar después/);
       assert.deepEqual(disk().items.map(i => i.id), expected);
       assert.deepEqual(disk().library, original.library);
       await page.locator('#undo').click(); await saved(page);
@@ -65,7 +77,7 @@ const disk = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'
     // Rotated arcs use their own ordering, not the screen's left/right direction.
     await page.locator('[data-page="shape"]').click();
     await page.locator('[data-setting="rotation"]').evaluate(el => { el.value = '90'; el.dispatchEvent(new Event('input', { bubbles: true })); }); await saved(page);
-    await page.locator('[data-page="actions"]').click(); await page.locator('.row[data-id="edit"]').click();
+    await page.locator('[data-page="actions"]').click(); await page.locator('.row[data-id="edit"]').click(); await page.waitForTimeout(600);
     const groupBefore = disk().items.find(i => i.id === 'edit').items.map(i => i.id);
     await coordinateDrop('copy', 'redo', false, 'after'); await saved(page);
     assert.deepEqual(disk().items.find(i => i.id === 'edit').items.map(i => i.id), [...groupBefore.slice(1), 'copy']);
@@ -85,11 +97,7 @@ const disk = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'
     await coordinateDrop('pictures', 'edit'); await saved(page);
     assert.ok(disk().items.find(i => i.id === 'edit').items.some(i => i.id === 'pictures'));
     await page.locator('#undo').click(); await saved(page);
-    const drag = (from, to) => page.evaluate(([a, b]) => {
-      const src = document.querySelector(a), dst = document.querySelector(b), dt = new DataTransfer();
-      const r = dst.getBoundingClientRect(), at = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
-      src.dispatchEvent(new DragEvent('dragstart', at)); dst.dispatchEvent(new DragEvent('dragover', at)); dst.dispatchEvent(new DragEvent('drop', at)); src.dispatchEvent(new DragEvent('dragend', at));
-    }, [from, to]);
+    const drag = async (from, to) => mouseDrag(await centerOf(from), await centerOf(to));
     await drag('#stage [data-id="downloads"]', '#ring-store'); await saved(page);
     assert.ok(disk().library.some(i => i.id === 'downloads'));
     assert.ok(!disk().items.some(i => i.id === 'downloads'));
@@ -107,10 +115,11 @@ const disk = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'
     assert.ok(disk().items.find(i => i.id === 'edit').items.some(i => i.id === 'pictures'));
     await page.locator('#undo').click(); await saved(page);
     assert.ok(disk().items.some(i => i.id === 'pictures'));
-    await page.locator('[data-page="appearance"]').click(); await page.locator('[data-palette="lagoon"]').click(); await saved(page);
+    await page.locator('[data-page="appearance"]').click(); await page.evaluate(() => document.querySelectorAll('details.more-settings').forEach(d => { d.open = true; })); await page.locator('[data-palette="lagoon"]').click(); await saved(page);
     assert.equal(disk().ringAccent, '#4cc0bd'); assert.equal(disk().theme, 'carbon');
     assert.equal(await page.locator('#page-appearance .ring').evaluate(el => getComputedStyle(el).getPropertyValue('--accent').trim()), '#4cc0bd');
     await page.locator('[data-page="shortcut"]').click();
+    await page.evaluate(() => document.querySelectorAll('details.more-settings').forEach(d => { d.open = true; }));
     await page.locator('[data-setting="mouseMode"] [data-value="double"]').click();
     await page.locator('[data-setting="selectionMode"] [data-value="precise"]').click();
     await page.locator('[data-setting="wheelNavigation"]').check(); await saved(page);
@@ -149,7 +158,29 @@ const disk = () => JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'
     await page.screenshot({ path: path.join(root, 'artifacts/studio-updated.png') });
     await page.locator('#library-toggle').click(); await page.locator('#library-search').fill('');
     await page.screenshot({ path: path.join(root, 'artifacts/library-updated.png') });
+    // Adding asks what first; a new web names itself after its site until it is renamed.
+    if (await page.locator('#library-card').isVisible()) await page.locator('#library-close').click();
+    await page.locator('.row[data-id="files"]').click();
+    await page.locator('#add').click(); await page.locator('#add-dialog [data-add="url"]').click();
+    await page.locator('#action-url').fill('https://www.github.com/halo'); await saved(page);
+    assert.ok(disk().items.some(i => i.type === 'url' && i.label === 'Github' && i.target === 'https://www.github.com/halo'), 'New web is named after its site');
+    await page.keyboard.press('Control+n'); await page.locator('#add-query').fill('captura'); await page.locator('#add-recipes .add-recipe').first().click(); await saved(page);
+    assert.ok(disk().items.some(i => i.label === 'Captura de pantalla'), 'Prepared action is added from the dialog');
+    // Inspector: a note and a hidden action never reach the real ring, but stay in the editor.
+    await page.locator('#library-close').click().catch(() => {});
+    await page.locator('.row[data-id="documents"]').click();
+    await page.locator('#insp-more').evaluate(d => { d.open = true; });
+    await page.locator('#action-note').fill('Mis papeles'); await page.locator('#toggle-visible').click(); await saved(page);
+    assert.equal(disk().items.find(i => i.id === 'documents').hidden, true); assert.equal(disk().items.find(i => i.id === 'documents').note, 'Mis papeles');
+    assert.equal(await page.locator('.row[data-id="documents"].is-hidden').count(), 1);
+    await page.evaluate(() => window.aptic.showMenu());
+    const overlay = app.windows().find(w => w.url().endsWith('/overlay.html'));
+    await overlay.waitForSelector('.ring[data-open] .ring-opt', { state: 'attached' });
+    assert.equal(await overlay.locator('.ring-opt[data-id="documents"]').count(), 0, 'Hidden action stays out of the ring');
+    await overlay.keyboard.press('Escape'); await page.waitForTimeout(400);
+    await page.locator('#action-visible').check(); await saved(page);
+    assert.equal('hidden' in disk().items.find(i => i.id === 'documents'), false);
     assert.deepEqual(errors, []);
-    console.log('PASS: fixed panels, radial DOM reuse, circle drag, library search/double click/catalog, groups/undo, custom palette, gesture persistence, precise/dwell/release, minimum window layout');
+    console.log('PASS: hidden actions and notes, fixed panels, radial DOM reuse, circle drag, library search/double click/catalog, groups/undo, custom palette, gesture persistence, precise/dwell/release, minimum window layout');
   } finally { await app.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

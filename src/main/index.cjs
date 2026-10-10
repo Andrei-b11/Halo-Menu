@@ -9,7 +9,7 @@ const fileClipboard = require('./file-clipboard.cjs');
 const { createPasteFocus } = require('./paste-focus.cjs');
 let pasteFocus, menuDestination = null;
 let clipboardResult = null;
-let openingMenu = 0, releasedWhileOpening = false;
+let openingMenu = 0, releasedWhileOpening = false, menuShown = false, hideTimer = null;
 let clips, clipQueue = Promise.resolve();
 const testMode = process.argv.includes('--test-mode');
 const profile = process.argv.find(arg => arg.startsWith('--aptic-profile='));
@@ -51,12 +51,26 @@ function notifyGesture(source, detail = '') { if (editor && !editor.isDestroyed(
 // La ventana se coloca alrededor del punto y, si choca con un borde, se mete hacia dentro;
 // el anillo no se mueve con ella: se le dice dónde está el punto dentro de la ventana.
 function stopHolding() { if (holding) clearInterval(holding.timer); holding = null; }
+// Si el anillo está (o va a estar) en pantalla. La ventana tarda un fotograma más en irse.
+const shown = () => !!overlay && !overlay.isDestroyed() && menuShown;
+// Una ventana escondida vuelve a aparecer enseñando su último fotograma. Si se escondiera con
+// el anillo pintado, al reabrirla asomaría el anterior un instante en su sitio viejo: por eso
+// antes se vacía, se espera a que ese fotograma vacío llegue a la pantalla y solo entonces se
+// esconde. Mientras tanto no recibe clics; si se vuelve a abrir antes, no se esconde.
 function closeOverlay() {
   openingMenu++; releasedWhileOpening = false;
   stopHolding();
-  const was = !!pinned; pinned = null;
-  if (overlay && !overlay.isDestroyed()) { overlay.webContents.send('menu-hidden'); overlay.setIgnoreMouseEvents(false); overlay.hide(); }
+  const was = !!pinned; pinned = null; menuShown = false;
+  if (overlay && !overlay.isDestroyed()) {
+    overlay.webContents.send('menu-hidden');
+    clearTimeout(hideTimer);
+    if (overlay.isVisible()) { overlay.setIgnoreMouseEvents(true); const ticket = openingMenu; hideTimer = setTimeout(() => finishHide(ticket), 90); }
+  }
   if (was) broadcast();
+}
+function finishHide(ticket = openingMenu) {
+  if (ticket !== openingMenu || menuShown || !overlay || overlay.isDestroyed()) return;
+  clearTimeout(hideTimer); overlay.hide(); overlay.setIgnoreMouseEvents(false);
 }
 function placeOverlay(point, extra) {
   const area = screen.getDisplayNearestPoint(point).workArea;
@@ -66,11 +80,17 @@ function placeOverlay(point, extra) {
 }
 async function showOverlay({ hold = false, rootId = null, source = 'menu', notice = '' } = {}) {
   if (!overlay || overlay.isDestroyed()) return;
-  if (overlay.isVisible() && !pinned) { closeOverlay(); return; }
+  if (shown() && !pinned) { closeOverlay(); return; }
   if (pinned) closeOverlay();
   const ticket = ++openingMenu; releasedWhileOpening = false;
-  menuDestination = await pasteFocus?.capture() || null;
+  // La ventana y el cursor de destino se leen antes de enseñar el anillo, pero sin hacerlo
+  // esperar: si el sistema tarda, se usa la ventana activa ya conocida y el resto llega luego.
+  const capture = pasteFocus?.capture();
+  const quick = capture ? await Promise.race([capture, delay(45).then(() => undefined)]) : null;
   if (ticket !== openingMenu || overlay.isDestroyed()) return;
+  menuDestination = quick === undefined ? (pasteFocus.current ? { ...pasteFocus.current, pointer: null } : null) : quick || null;
+  if (quick === undefined) capture.then(value => { if (ticket === openingMenu && value) menuDestination = value; });
+  clearTimeout(hideTimer); menuShown = true; overlay.setIgnoreMouseEvents(false);
   const cursor = screen.getCursorScreenPoint(), area = screen.getDisplayNearestPoint(cursor).workArea;
   const point = config.position === 'center' ? { x: Math.round(area.x + area.width / 2), y: Math.round(area.y + area.height / 2) } : cursor;
   placeOverlay(point, { hold, rootId, pinned: false, notice });
@@ -80,7 +100,7 @@ async function showOverlay({ hold = false, rootId = null, source = 'menu', notic
     // Mientras se mantiene el gesto, la otra aplicación tiene capturado el ratón y el anillo
     // no recibiría movimiento: se le envía la posición del cursor a cada fotograma.
     const timer = setInterval(() => {
-      if (!overlay.isVisible()) return stopHolding();
+      if (!shown()) return stopHolding();
       const c = screen.getCursorScreenPoint(), b = overlay.getBounds();
       overlay.webContents.send('pointer', { x: c.x - b.x, y: c.y - b.y });
     }, 16);
@@ -98,7 +118,8 @@ function pinPoint() {
 }
 function pin(on) {
   if (!on) { closeOverlay(); return snapshot(); }
-  if (overlay.isVisible()) closeOverlay();
+  if (shown()) closeOverlay();
+  clearTimeout(hideTimer); menuShown = true;
   pinned = { point: pinPoint() };
   menuDestination = pasteFocus?.current || null;
   placeOverlay(pinned.point, { pinned: true });
@@ -109,7 +130,7 @@ function pin(on) {
 function releaseHold() {
   if (!holding) { releasedWhileOpening = true; return; }
   stopHolding();
-  if (overlay && !overlay.isDestroyed() && overlay.isVisible()) overlay.webContents.send('release');
+  if (shown()) overlay.webContents.send('release');
 }
 
 // --- Atajos y gestos ------------------------------------------------------------------
@@ -130,7 +151,7 @@ async function activateProfile(id, open) {
     await result; profileSwitches++; broadcast();
   }
   notifyGesture('profile', profile.name);
-  if (open) { if (overlay.isVisible() && !pinned) closeOverlay(); showOverlay({ source: 'profile', notice: 'Perfil «' + profile.name + '»' }); }
+  if (open) { if (shown() && !pinned) closeOverlay(); showOverlay({ source: 'profile', notice: 'Perfil «' + profile.name + '»' }); }
 }
 function runHotkey(id) {
   if (id.startsWith('profile:')) { activateProfile(id.slice(8), true).catch(error => { warning = error.message; broadcast(); }); return; }
@@ -175,7 +196,7 @@ async function prepareBinding(c) {
         if (message.type === 'error') { clearTimeout(timer); child.kill(); reject(new Error('No se pudo activar el gesto: ' + message.message)); }
         if (binding !== next) return;
         if (message.type === 'trigger') showOverlay({ source: message.source || 'shortcut' });
-        if (message.type === 'down') { notifyGesture(message.source, 'pulsado'); if (overlay.isVisible() && !pinned) closeOverlay(); else showOverlay({ hold: true, source: message.source }); }
+        if (message.type === 'down') { notifyGesture(message.source, 'pulsado'); if (shown() && !pinned) closeOverlay(); else showOverlay({ hold: true, source: message.source }); }
         if (message.type === 'up') { notifyGesture(message.source, 'soltado'); releaseHold(); }
       });
       child.on('exit', () => { clearTimeout(timer); if (!ready) reject(new Error('El detector nativo no está disponible. Usa una pulsación simple.')); else if (binding === next) { shortcutStatus = 'Detector detenido'; warning = 'El detector de gestos se ha detenido. Vuelve a guardar el atajo o usa una pulsación simple.'; binding = { ...next, child: null }; broadcast(); } });
@@ -197,7 +218,7 @@ function watchCorner() {
     if (d > 60) { armed = true; since = 0; return; }
     if (d > 4 || !armed) { since = 0; return; }
     if (!since) since = Date.now();
-    else if (Date.now() - since > config.cornerDelay) { armed = false; since = 0; if (!overlay.isVisible() || pinned) showOverlay({ source: 'corner' }); }
+    else if (Date.now() - since > config.cornerDelay) { armed = false; since = 0; if (!shown() || pinned) showOverlay({ source: 'corner' }); }
   }, 60);
 }
 const activeStatus = () => testMode ? 'Modo de prueba' : (process.env.XDG_SESSION_TYPE === 'wayland' ? 'Solicitado al portal del escritorio' : 'Activo');
@@ -213,7 +234,7 @@ async function save(value) {
   shortcutStatus = activeStatus(); warning = '';
   watchCorner(); updateTray(); broadcast();
   // El anillo en vivo se recoloca: con más acciones necesita una ventana más grande.
-  if (pinned && overlay.isVisible()) { pinned.point = pinPoint(); placeOverlay(pinned.point, { pinned: true, instant: true }); }
+  if (pinned && shown()) { pinned.point = pinPoint(); placeOverlay(pinned.point, { pinned: true, instant: true }); }
   return snapshot();
 }
 
@@ -304,7 +325,7 @@ async function runAction(id) {
   if (item.type === 'group') throw new Error('Un grupo se abre en el anillo.');
   if (launching) return;
   launching = true;
-  const destination = overlay?.isVisible() ? menuDestination : await pasteFocus?.capture();
+  const destination = shown() ? menuDestination : await pasteFocus?.capture();
   closeOverlay();
   try {
     if (item.type === 'settings') { showEditor(); return; }
@@ -334,25 +355,32 @@ async function useClip(id, action = 'paste', destination) {
   else {
     const paths = await clips.availablePaths(value);
     if (action === 'paths') await clipboard.writeText(paths.join('\r\n'));
-    else await fileClipboard.writeFiles(paths);
     // Explorer exposes its destination folder, so transfer through the shell
     // instead of depending on a simulated shortcut and the selected child view.
     if (action === 'paste' && process.platform === 'win32') {
-      const pointer = destination?.pointer;
-      if (pointer) {
-        const result = await fileClipboard.pasteFiles(paths, pointer.desktop ? { folder: app.getPath('desktop') } : { handle: pointer.handle });
-        if (result) return result;
+      // Primero la carpeta bajo el ratón; si no, la ventana del Explorador que estaba
+      // delante. Los archivos se copian de verdad y se espera a que terminen; el portapapeles
+      // del sistema se rellena después, sin hacer esperar al pegado.
+      const pointer = destination?.pointer, tries = [];
+      if (pointer) tries.push(pointer.desktop ? { folder: app.getPath('desktop') } : { handle: pointer.handle });
+      if (destination?.handle && destination.handle !== pointer?.handle) tries.push({ handle: destination.handle });
+      for (const where of tries) {
+        const result = await fileClipboard.pasteFiles(paths, where);
+        if (result) { fileClipboard.writeFiles(paths).catch(() => {}); return result; }
       }
+      await fileClipboard.writeFiles(paths).catch(() => {});
       // Files need a real folder. Never send an unverified Ctrl+V to an unrelated window.
       const picked = await dialog.showOpenDialog(editor, { title: 'No se detectó una carpeta bajo el ratón. Elige dónde pegar', properties: ['openDirectory', 'createDirectory'] });
       if (picked.canceled) return null;
       return fileClipboard.pasteFiles(paths, { folder: picked.filePaths[0] });
     }
+    if (action !== 'paths') await fileClipboard.writeFiles(paths);
   }
   if (action === 'paste') await sendKeys('CommandOrControl+V', destination);
 }
 async function clipCommand(request) {
   if (!request || typeof request !== 'object') throw Error('Operación no válida.');
+  let captured = null;
   const id = slotId(request.slot), mode = request.mode ?? 'copy';
   if (!['copy', 'reference'].includes(mode)) throw Error('Modo de archivo no válido.');
   switch (request.op) {
@@ -360,10 +388,16 @@ async function clipCommand(request) {
     case 'text': clips.text(id, request.text); break;
     case 'files': await clips.files(id, request.paths, mode); break;
     case 'capture': {
-      const text = await clipboard.readText();
+      // Desde el anillo (o con «Guardar selección»), lo seleccionado en el Explorador que
+      // estaba delante se guarda directamente, sin pasar por Ctrl + C. Si no hay selección,
+      // lo que haya en el portapapeles: archivos y carpetas, o texto.
+      const from = request.from === 'ring' ? menuDestination?.handle : request.from === 'explorer' ? pasteFocus?.current?.handle : null;
+      const selected = from ? await fileClipboard.selection(from) : [];
+      if (selected.length) { await clips.files(id, selected, mode); captured = { count: selected.length, source: 'selection', mode }; break; }
+      if (request.from === 'explorer') throw Error('No hay nada seleccionado en el Explorador. Selecciona archivos o carpetas en una ventana del Explorador y vuelve a pulsar.');
       const paths = process.platform === 'win32' ? await fileClipboard.readFiles() : [];
-      if (paths.length) await clips.files(id, paths, mode);
-      else clips.text(id, text);
+      if (paths.length) { await clips.files(id, paths, mode); captured = { count: paths.length, source: 'clipboard', mode }; }
+      else { clips.text(id, await clipboard.readText()); captured = { count: 0, source: 'text', mode }; }
       break;
     }
     case 'pick':
@@ -390,7 +424,7 @@ async function clipCommand(request) {
     default: throw Error('Operación de portapapeles no válida.');
   }
   broadcast();
-  return { clips: clips.summary() };
+  return { clips: clips.summary(), captured };
 }
 async function pickImage() {
   const result = await dialog.showOpenDialog(editor, { title: 'Elegir imagen para el icono', filters: [{ name: 'Imágenes', extensions: ['png', 'jpg', 'jpeg', 'ico', 'bmp', 'gif'] }], properties: ['openFile'] });
@@ -443,7 +477,8 @@ else {
     handle('show-menu', () => showOverlay({ source: 'button' })); handle('hide-menu', closeOverlay); handle('open-editor', showEditor);
     handle('pin-menu', on => pin(!!on));
     handle('profile', id => activateProfile(String(id), false).then(snapshot));
-    handle('overlay-hover', over => { if (pinned && overlay.isVisible()) overlay.setIgnoreMouseEvents(!over, { forward: true }); });
+    handle('overlay-hover', over => { if (pinned && shown()) overlay.setIgnoreMouseEvents(!over, { forward: true }); });
+    handle('overlay-blank', () => finishHide());
     handle('icon', getIcon); handle('run', runAction); handle('pick-image', pickImage); handle('apps', listApps);
     handle('window', action => { if (action === 'minimize') editor.minimize(); if (action === 'close') editor.close(); if (action === 'maximize') editor.isMaximized() ? editor.unmaximize() : editor.maximize(); });
     handle('quit', () => { quitting = true; app.quit(); });
@@ -464,9 +499,9 @@ else {
     });
     editor = secureWindow({ width: 1340, height: 880, minWidth: 1080, minHeight: 700, frame: false, show: false, backgroundColor: '#171717', title: 'HALO MENU', icon: path.join(renderer, 'assets/aptic.png') });
     overlay = secureWindow({ width: 520, height: 520, frame: false, transparent: true, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, focusable: true, title: 'HALO MENU · Menú' });
-    pasteFocus = createPasteFocus([editor, overlay]);
+    pasteFocus = createPasteFocus([editor, overlay]); fileClipboard.useHelper(pasteFocus);
     overlay.setAlwaysOnTop(true, 'pop-up-menu'); overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    overlay.on('blur', () => { if (config.closeOnBlur && !holding && !pinned) closeOverlay(); });
+    overlay.on('blur', () => { if (config.closeOnBlur && !holding && !pinned && menuShown) closeOverlay(); });
     editor.on('close', event => { if (!quitting && tray) { event.preventDefault(); if (pinned) closeOverlay(); editor.hide(); } });
     let moving; editor.on('move', () => { if (!pinned) return; clearTimeout(moving); moving = setTimeout(() => { if (!pinned) return; pinned.point = pinPoint(); placeOverlay(pinned.point, { pinned: true, instant: true }); }, 60); });
     editor.webContents.on('render-process-gone', () => editor.reload());

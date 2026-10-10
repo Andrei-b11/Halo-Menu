@@ -7,6 +7,7 @@ const exec = promisify(execFile), root = path.resolve(__dirname, '..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'halo-explorer-'));
 const destination = path.join(directory, 'Destino HALO'), source = path.join(directory, 'Archivo asignado.txt');
 fs.mkdirSync(destination); fs.writeFileSync(source, 'HALO file paste verification');
+const picked = path.join(destination, 'Seleccionado.txt'); fs.writeFileSync(picked, 'selected in Explorer');
 const ps = code => exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(code, 'utf16le').toString('base64')], { windowsHide: true, timeout: 20000 });
 const destLiteral = destination.replace(/'/g, "''");
 let app;
@@ -34,7 +35,22 @@ for ($n=0; $n -lt 40; $n++) {
  if ($window) { [Console]::WriteLine($window.HWND); break }
  Start-Sleep -Milliseconds 100
 }
-if (!$window) { throw 'Explorer destination not found' }`);
+if (!$window) { throw 'Explorer destination not found' }
+$item = $window.Document.Folder.ParseName('Seleccionado.txt'); $window.Document.SelectItem($item, 29)`);
+  // Lo seleccionado en el Explorador se lee sin Ctrl + C, y el portapapeles de archivos va por
+  // el ayudante que ya está abierto, no por un PowerShell nuevo en cada operación.
+  const fileClipboard = require('../src/main/file-clipboard.cjs'), helper = require('../src/main/paste-focus.cjs').createPasteFocus([]);
+  try {
+    fileClipboard.useHelper(helper); await helper.capture();
+    let selection = [];
+    for (let n = 0; n < 20 && !selection.length; n++) { selection = await fileClipboard.selection(focused.stdout.trim()); if (!selection.length) await new Promise(r => setTimeout(r, 150)); }
+    assert.deepEqual(selection.map(p => p.toLowerCase()), [picked.toLowerCase()], 'Explorer selection is captured directly');
+    const started = Date.now();
+    await fileClipboard.writeFiles([source, picked]);
+    assert.deepEqual((await fileClipboard.readFiles()).map(p => p.toLowerCase()), [source, picked].map(p => p.toLowerCase()));
+    const took = Date.now() - started; assert.ok(took < 1500, 'Helper clipboard round trip took ' + took + ' ms');
+    console.log('Clipboard write+read through the helper: ' + took + ' ms');
+  } finally { fileClipboard.useHelper(null); helper.close(); }
   // Exercise the same Explorer transfer used by the circle with its real HWND.
   const value = await page.evaluate(() => window.aptic.clipboard({ op: 'get', slot: '1' }));
   const stored = path.join(directory, 'profile', 'clipboard', value.files[0].stored);

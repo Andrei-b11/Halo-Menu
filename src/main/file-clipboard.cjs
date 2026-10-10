@@ -42,10 +42,29 @@ $data.SetData('Preferred DropEffect', $effect)
     child.stdin.end(JSON.stringify(operation === 'paste' ? { files, ...destination } : files));
   });
 }
+// Con el ayudante de Windows ya abierto (paste-focus) cada operación tarda milisegundos; si
+// no está o falla, se usa un PowerShell propio como antes, más lento pero igual de seguro.
+let helper = null;
+const fast = async (op, arg, fallback) => {
+  if (helper?.alive) { try { const value = await helper.request(op, arg); if (value !== null || op === 'folder') return value; } catch { /* se intenta del modo lento */ } }
+  return fallback();
+};
+const encode = value => Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
 module.exports = {
-  readFiles: () => windowsClipboard('read'), writeFiles: files => windowsClipboard('write', files),
+  useHelper(value) { helper = value; },
+  readFiles: () => fast('files-read', '', () => windowsClipboard('read')),
+  writeFiles: files => fast('files-write', encode(files), () => windowsClipboard('write', files)),
+  // Lo seleccionado en una ventana del Explorador: guardar sin tener que copiar antes.
+  async selection(handle) {
+    if (process.platform !== 'win32' || !handle || !helper?.alive) return [];
+    try { const list = await helper.request('selection', String(handle)); return Array.isArray(list) ? list.filter(p => typeof p === 'string' && path.isAbsolute(p)) : []; } catch { return []; }
+  },
+  async folderOf(handle) {
+    if (!handle) return null;
+    return fast('folder', String(handle), () => windowsClipboard('paste', [], { handle }));
+  },
   async pasteFiles(files, destination) {
-    const folder = destination.folder || await windowsClipboard('paste', [], destination);
+    const folder = destination.folder || await module.exports.folderOf(destination.handle);
     if (!folder) return false;
     return pasteFiles(files, folder);
   }

@@ -33,6 +33,10 @@ public class HaloFocus {
  }
 }
 '@
+Add-Type -AssemblyName System.Windows.Forms
+$shellApp = New-Object -ComObject Shell.Application
+function Reply($job, $value) { $json = ConvertTo-Json -Compress -Depth 3 -InputObject $value; [Console]::WriteLine('json ' + $job + ' ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$json))) }
+function ExplorerWindow($handle) { foreach ($w in @($shellApp.Windows())) { try { if ([string]$w.HWND -eq [string]$handle) { return $w } } catch {} }; return $null }
 $excluded = @(${handles.join(',')})
 $last = ''; $line = [HaloFocus]::Next()
 while ($true) {
@@ -74,20 +78,49 @@ while ($true) {
    }
    [Console]::WriteLine('done ' + $job + ' ' + [int]$ok)
   }
+  if ($command -match '^(files-read|files-write|folder|selection) (\\d+) ?(.*)$') {
+   $op = $Matches[1]; $job = $Matches[2]; $arg = $Matches[3]
+   try {
+    if ($op -eq 'files-read') { Reply $job @([Windows.Forms.Clipboard]::GetFileDropList()) }
+    elseif ($op -eq 'files-write') {
+     $paths = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($arg)))
+     $list = New-Object System.Collections.Specialized.StringCollection
+     foreach ($file in @($paths)) { [void]$list.Add([string]$file) }
+     $data = New-Object Windows.Forms.DataObject; $data.SetFileDropList($list)
+     $effect = New-Object IO.MemoryStream; $effect.Write([byte[]](1,0,0,0), 0, 4); $effect.Position = 0
+     $data.SetData('Preferred DropEffect', $effect)
+     [Windows.Forms.Clipboard]::SetDataObject($data, $true, 10, 100); Reply $job $true
+    }
+    else {
+     $w = ExplorerWindow $arg; $result = $null
+     if ($null -ne $w) {
+      if ($op -eq 'folder') { $p = [string]$w.Document.Folder.Self.Path; if (Test-Path -LiteralPath $p -PathType Container) { $result = $p } }
+      else { $result = @(@($w.Document.SelectedItems()) | ForEach-Object { [string]$_.Path } | Where-Object { $_ -and (Test-Path -LiteralPath $_) }) }
+     }
+     if ($op -eq 'selection' -and $null -eq $result) { $result = @() }
+     Reply $job $result
+    }
+   } catch { [Console]::WriteLine('json ' + $job + ' !') }
+  }
   $line = [HaloFocus]::Next()
  }
 }`;
   const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const child = spawn(exe, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(code, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(exe, ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(code, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let current = null, buffer = '', sequence = 0, dead = false;
   const jobs = new Map();
-  const fail = () => { dead = true; current = null; for (const job of jobs.values()) { clearTimeout(job.timer); job.resolve(false); } jobs.clear(); };
+  const fail = () => { dead = true; current = null; for (const job of jobs.values()) { clearTimeout(job.timer); job.resolve(job.reject ? null : false); } jobs.clear(); };
   child.on('error', fail); child.on('exit', fail); child.stdin.on('error', fail); child.stderr.resume();
   child.stdout.on('data', data => {
     buffer += data.toString(); const lines = buffer.split(/\r?\n/); buffer = lines.pop();
     for (const line of lines) {
       const [op, a, b] = line.split(' ');
       if (op === 'focus' && /^\d+$/.test(a) && /^\d+$/.test(b)) current = { handle: a, pid: b };
+      if (op === 'json' && jobs.has(a)) {
+        const job = jobs.get(a); jobs.delete(a); clearTimeout(job.timer);
+        if (b === '!' || b === undefined) job.reject(Error('Windows no respondió a tiempo. Inténtalo de nuevo.'));
+        else { try { job.resolve(JSON.parse(Buffer.from(b, 'base64').toString('utf8') || 'null')); } catch { job.reject(Error('Respuesta de Windows no válida.')); } }
+      }
       if (op === 'done' && jobs.has(a)) { const job = jobs.get(a); jobs.delete(a); clearTimeout(job.timer); job.resolve(b === '1'); }
       if (op === 'target' && jobs.has(a)) {
         const job = jobs.get(a); jobs.delete(a); clearTimeout(job.timer);
@@ -110,6 +143,18 @@ while ($true) {
       return new Promise(resolve => {
         const id = String(++sequence), timer = setTimeout(() => { jobs.delete(id); resolve(false); }, 2500);
         jobs.set(id, { resolve, timer }); child.stdin.write(`${paste ? 'paste' : 'restore'} ${id} ${target.handle} ${target.pid}\n`);
+      });
+    },
+    // Lo que antes necesitaba abrir PowerShell cada vez (≈ medio segundo) se pide a este
+    // proceso, que ya está abierto: leer y escribir archivos en el portapapeles, la carpeta de
+    // una ventana del Explorador y lo que está seleccionado en ella.
+    get alive() { return !dead; },
+    request(op, arg = '') {
+      if (dead) return Promise.reject(Error('El ayudante de Windows no está disponible.'));
+      return new Promise((resolve, reject) => {
+        const id = String(++sequence), timer = setTimeout(() => { jobs.delete(id); reject(Error('Windows no respondió a tiempo. Inténtalo de nuevo.')); }, 8000);
+        jobs.set(id, { resolve, reject, timer }); child.stdin.write(`${op} ${id}${arg ? ' ' + arg : ''}
+`);
       });
     },
     close() { child.kill(); fail(); }
